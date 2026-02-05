@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppNotification } from '../types';
-import { MessageSquare, UserPlus, Calendar, Clock, Check, X, Loader2, XCircle } from 'lucide-react';
+import { MessageSquare, UserPlus, Calendar, Clock, Check, X, Loader2, XCircle, UserX } from 'lucide-react';
 import { apiService } from '../services/apiService';
 
 interface NotificationDropdownProps {
@@ -12,9 +12,48 @@ interface NotificationDropdownProps {
   onRefresh?: () => void;
 }
 
+const PROCESSED_NOTIFICATIONS_KEY = 'processed_notifications';
+
 const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notifications, onMarkRead, onClose, onNotificationClick, onRefresh }) => {
   const [processing, setProcessing] = useState<number | null>(null);
-  const [processedNotifications, setProcessedNotifications] = useState<{ [key: number]: 'approved' | 'rejected' }>({});
+  const [processedNotifications, setProcessedNotifications] = useState<{ [key: number]: 'approved' | 'rejected' }>(() => {
+    // Load from localStorage on mount
+    try {
+      const stored = localStorage.getItem(PROCESSED_NOTIFICATIONS_KEY);
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Save to localStorage whenever processedNotifications changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROCESSED_NOTIFICATIONS_KEY, JSON.stringify(processedNotifications));
+    } catch (err) {
+      console.error('Failed to save processed notifications:', err);
+    }
+  }, [processedNotifications]);
+
+  // Clean up processed notifications that are no longer in the notifications list
+  useEffect(() => {
+    const currentNotificationIds = new Set(notifications.map(n => n.id));
+    const processed = { ...processedNotifications };
+    let hasChanges = false;
+
+    // Remove processed notifications that are no longer present
+    Object.keys(processed).forEach(idStr => {
+      const id = parseInt(idStr);
+      if (!currentNotificationIds.has(id)) {
+        delete processed[id];
+        hasChanges = true;
+      }
+    });
+
+    if (hasChanges) {
+      setProcessedNotifications(processed);
+    }
+  }, [notifications]);
   const getIcon = (type: string) => {
     switch (type) {
       case 'message': return <MessageSquare size={16} className="text-orange-500" />;
@@ -23,6 +62,7 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notificatio
       case 'join_request': return <UserPlus size={16} className="text-amber-500" />;
       case 'join_approved': return <Check size={16} className="text-emerald-500" />;
       case 'join_rejected': return <X size={16} className="text-red-500" />;
+      case 'removed_from_group': return <UserX size={16} className="text-red-600" />;
       default: return <Clock size={16} className="text-slate-400" />;
     }
   };

@@ -26,6 +26,12 @@ import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import SignupPage from './components/SignupPage';
 import NotificationDropdown from './components/NotificationDropdown';
+import AdminLogin from './components/admin/AdminLogin';
+import AdminDashboard from './components/admin/AdminDashboard';
+import AdminUsers from './components/admin/AdminUsers';
+import AdminGroups from './components/admin/AdminGroups';
+import AdminFeedback from './components/admin/AdminFeedback';
+import AdminAnalytics from './components/admin/AdminAnalytics';
 
 import { User, AppNotification } from './types';
 import { apiService } from './services/apiService';
@@ -269,6 +275,25 @@ const App: React.FC = () => {
         <Route path="/settings" element={
           user ? <Layout user={user} onLogout={handleLogout}><SettingsPage /></Layout> : <Navigate to="/login" />
         } />
+
+        {/* Admin Routes */}
+        <Route path="/admin/login" element={<AdminLogin />} />
+        <Route path="/admin/dashboard" element={
+          user && user.email === 'admin@au.edu' ? <AdminDashboard /> : <Navigate to="/admin/login" />
+        } />
+        <Route path="/admin/users" element={
+          user && user.email === 'admin@au.edu' ? <AdminUsers /> : <Navigate to="/admin/login" />
+        } />
+        <Route path="/admin/groups" element={
+          user && user.email === 'admin@au.edu' ? <AdminGroups /> : <Navigate to="/admin/login" />
+        } />
+        <Route path="/admin/feedback" element={
+          user && user.email === 'admin@au.edu' ? <AdminFeedback /> : <Navigate to="/admin/login" />
+        } />
+        <Route path="/admin/analytics" element={
+          user && user.email === 'admin@au.edu' ? <AdminAnalytics /> : <Navigate to="/admin/login" />
+        } />
+        <Route path="/admin" element={<Navigate to="/admin/dashboard" />} />
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

@@ -116,7 +116,7 @@ const HomePage: React.FC = () => {
     });
   }, [groups, searchQuery, facultyFilter, subjectFilter, locationFilter, statusFilter]);
 
-  const handleJoinLeave = async (id: string, currentlyMember: boolean, hasPendingRequest: boolean) => {
+  const handleJoinLeave = async (id: string, currentlyMember: boolean, hasPendingRequest: boolean, groupStatus: GroupStatus) => {
     try {
       if (currentlyMember) {
         await apiService.leaveGroup(id);
@@ -126,8 +126,13 @@ const HomePage: React.FC = () => {
         alert('Your join request is pending. The leader will review it soon!');
         return;
       } else {
-        await apiService.joinGroup(id);
-        alert('Join request sent! You will be notified when the leader reviews your request.');
+        const response = await apiService.joinGroup(id);
+        // Show different message based on group status
+        if (groupStatus === GroupStatus.OPEN) {
+          alert('Successfully joined the group!');
+        } else {
+          alert('Join request sent! You will be notified when the leader reviews your request.');
+        }
       }
       await loadAllData();
     } catch (err: any) {
@@ -194,35 +199,50 @@ const HomePage: React.FC = () => {
   const activeFilterCount = [facultyFilter, subjectFilter, locationFilter, statusFilter, searchQuery].filter(Boolean).length;
 
   // Render horizontal group card (for joined/created sections)
-  const renderCompactGroupCard = (group: StudyGroup) => (
-    <Link
-      key={group.id}
-      to={`/groups?group=${group.id}`}
-      className="flex-shrink-0 w-80 bg-white border border-slate-200 rounded-2xl p-6 hover:shadow-lg hover:border-orange-200 transition-all"
-    >
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-sm border border-orange-200">
-          {group.creator_name[0]}
+  const renderCompactGroupCard = (group: StudyGroup) => {
+    const isCreator = group.creator_id === currentUser?.id;
+
+    return (
+      <div
+        key={group.id}
+        className="flex-shrink-0 w-80 bg-white border border-slate-200 rounded-2xl p-6 hover:shadow-lg hover:border-orange-200 transition-all"
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-sm border border-orange-200">
+            {group.creator_name[0]}
+          </div>
+          <div className="flex-1 min-w-0">
+            <Link to={`/groups?group=${group.id}`} className="block group/title">
+              <h3 className="font-bold text-slate-900 truncate group-hover/title:text-orange-500 transition-colors">{group.name}</h3>
+            </Link>
+            <p className="text-xs font-semibold text-slate-400">{group.subject}</p>
+          </div>
+          {getStatusBadge(group.status)}
         </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-slate-900 truncate">{group.name}</h3>
-          <p className="text-xs font-semibold text-slate-400">{group.subject}</p>
+        <p className="text-sm text-slate-500 line-clamp-2 mb-4">{group.description}</p>
+        <div className="flex items-center justify-between text-xs mb-4">
+          <span className="flex items-center gap-1 text-slate-400 font-semibold">
+            <Users size={14} />
+            {group.members_count}/{group.max_members}
+          </span>
+          <span className="flex items-center gap-1 text-slate-400 font-semibold">
+            <MapPin size={14} />
+            {group.location}
+          </span>
         </div>
-        {getStatusBadge(group.status)}
+
+        {/* Leave Button - Only show if not the creator */}
+        {!isCreator && (
+          <button
+            onClick={() => handleJoinLeave(group.id, true, false, group.status)}
+            className="w-full px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all bg-white border-2 border-red-100 text-red-500 hover:bg-red-50"
+          >
+            Leave Group
+          </button>
+        )}
       </div>
-      <p className="text-sm text-slate-500 line-clamp-2 mb-4">{group.description}</p>
-      <div className="flex items-center justify-between text-xs">
-        <span className="flex items-center gap-1 text-slate-400 font-semibold">
-          <Users size={14} />
-          {group.members_count}/{group.max_members}
-        </span>
-        <span className="flex items-center gap-1 text-slate-400 font-semibold">
-          <MapPin size={14} />
-          {group.location}
-        </span>
-      </div>
-    </Link>
-  );
+    );
+  };
 
   return (
     <div className="max-w-6xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
@@ -444,27 +464,62 @@ const HomePage: React.FC = () => {
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {trendingGroups.slice(0, 6).map((group, idx) => (
-                  <Link
-                    key={group.id}
-                    to={`/groups?group=${group.id}`}
-                    className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden"
-                  >
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-full -mr-12 -mt-12 transition-all group-hover:bg-orange-500/10"></div>
-                    <div className="flex justify-between items-start mb-4 relative">
-                      <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center font-bold">
-                        #{idx + 1}
+                {trendingGroups.slice(0, 6).map((group, idx) => {
+                  const isFull = group.members_count >= group.max_members;
+                  const isClosed = group.status === GroupStatus.CLOSED;
+                  const isArchived = group.status === GroupStatus.ARCHIVED;
+                  const canJoin = !group.is_member && !group.has_pending_request && !isFull && !isArchived;
+
+                  return (
+                    <div
+                      key={group.id}
+                      className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden"
+                    >
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-full -mr-12 -mt-12 transition-all group-hover:bg-orange-500/10"></div>
+                      <div className="flex justify-between items-start mb-4 relative">
+                        <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center font-bold">
+                          #{idx + 1}
+                        </div>
+                        {getStatusBadge(group.status)}
                       </div>
-                      {getStatusBadge(group.status)}
+                      <Link to={`/groups?group=${group.id}`} className="block group/title">
+                        <h3 className="text-lg font-bold text-slate-900 mb-1 group-hover/title:text-orange-500 transition-colors">{group.name}</h3>
+                      </Link>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">{group.subject}</p>
+                      <div className="flex items-center gap-2 mb-4">
+                        <Users size={14} className="text-slate-300" />
+                        <span className="text-xs font-bold text-slate-500">{group.members_count} students enrolled</span>
+                      </div>
+
+                      {/* Join/Leave Button */}
+                      <button
+                        onClick={() => handleJoinLeave(group.id, !!group.is_member, !!group.has_pending_request, group.status)}
+                        disabled={(!canJoin && !group.is_member && !group.has_pending_request)}
+                        className={`w-full px-4 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                          group.is_member
+                            ? 'bg-white border-2 border-red-100 text-red-500 hover:bg-red-50'
+                            : group.has_pending_request
+                              ? 'bg-amber-50 border-2 border-amber-200 text-amber-600 cursor-default'
+                            : isArchived ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                            : isClosed ? 'bg-amber-500 text-white hover:bg-amber-600'
+                            : 'bg-orange-500 text-white hover:bg-orange-600'
+                        } disabled:opacity-80`}
+                      >
+                        {group.is_member
+                          ? 'Leave Group'
+                          : group.has_pending_request
+                            ? 'Request Pending...'
+                          : isArchived
+                            ? 'Hub Archived'
+                          : isClosed
+                            ? 'Request to Join'
+                          : isFull
+                            ? 'Hub Full'
+                          : 'Join Session'}
+                      </button>
                     </div>
-                    <h3 className="text-lg font-bold text-slate-900 mb-1">{group.name}</h3>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">{group.subject}</p>
-                    <div className="flex items-center gap-2">
-                      <Users size={14} className="text-slate-300" />
-                      <span className="text-xs font-bold text-slate-500">{group.members_count} students enrolled</span>
-                    </div>
-                  </Link>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -564,7 +619,7 @@ const HomePage: React.FC = () => {
                 const isFull = group.members_count >= group.max_members;
                 const isClosed = group.status === GroupStatus.CLOSED;
                 const isArchived = group.status === GroupStatus.ARCHIVED;
-                const canJoin = !group.is_member && !group.has_pending_request && !isFull && !isClosed && !isArchived;
+                const canJoin = !group.is_member && !group.has_pending_request && !isFull && !isArchived;
 
                 return (
                   <div key={group.id} className={`bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm hover:shadow-xl hover:shadow-slate-100 transition-all group relative overflow-hidden ${isArchived ? 'opacity-75 grayscale-[0.5]' : ''}`}>
@@ -610,7 +665,7 @@ const HomePage: React.FC = () => {
 
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={() => handleJoinLeave(group.id, !!group.is_member, !!group.has_pending_request)}
+                        onClick={() => handleJoinLeave(group.id, !!group.is_member, !!group.has_pending_request, group.status)}
                         disabled={(!canJoin && !group.is_member && !group.has_pending_request)}
                         className={`flex-1 md:flex-none px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
                           group.is_member
@@ -618,7 +673,7 @@ const HomePage: React.FC = () => {
                             : group.has_pending_request
                               ? 'bg-amber-50 border-2 border-amber-200 text-amber-600'
                             : isArchived ? 'bg-slate-200 text-slate-400'
-                            : isClosed ? 'bg-amber-100 text-amber-500'
+                            : isClosed ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-xl shadow-amber-100'
                             : 'bg-orange-500 text-white hover:bg-orange-600 shadow-xl shadow-orange-100'
                         } disabled:opacity-80`}
                       >
@@ -629,7 +684,7 @@ const HomePage: React.FC = () => {
                           : isArchived
                             ? 'Hub Archived'
                           : isClosed
-                            ? 'Closed Hub'
+                            ? 'Request to Join'
                           : isFull
                             ? 'Hub Full'
                           : 'Join Session'}

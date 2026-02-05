@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2, Bell } from 'lucide-react';
+import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2, Bell, UserX, Paperclip, File as FileIcon } from 'lucide-react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
-import { StudyGroup, Message, User, GroupStatus } from '../types';
+import { StudyGroup, Message, User, GroupStatus, GroupMember } from '../types';
 import { geminiService } from '../services/geminiService';
 import { apiService } from '../services/apiService';
 import LiveStudySession from './LiveStudySession';
@@ -18,6 +18,8 @@ const GroupsPage: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [inputText, setInputText] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
@@ -27,10 +29,13 @@ const GroupsPage: React.FC = () => {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showPendingRequestsModal, setShowPendingRequestsModal] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
+  const [kickingMemberId, setKickingMemberId] = useState<number | null>(null);
 
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [newMeeting, setNewMeeting] = useState({ title: '', start_time: '', location: '' });
   const [scheduling, setScheduling] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
 
   // Edit Group State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -92,6 +97,19 @@ const GroupsPage: React.FC = () => {
     }
   };
 
+  const fetchGroupMembers = async (groupId: string) => {
+    try {
+      setLoadingMembers(true);
+      const members = await apiService.getGroupMembers(groupId);
+      setGroupMembers(members);
+    } catch (err: any) {
+      console.error("Failed to fetch members", err);
+      alert(err.message || 'Failed to load members');
+    } finally {
+      setLoadingMembers(false);
+    }
+  };
+
   useEffect(() => {
     if (activeGroupId) {
       const fetchMessages = async () => {
@@ -120,14 +138,22 @@ const GroupsPage: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    if (showMembersModal && activeGroupId) {
+      fetchGroupMembers(activeGroupId);
+    }
+  }, [showMembersModal, activeGroupId]);
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || !activeGroupId || activeGroup?.status === GroupStatus.ARCHIVED) return;
+    if ((!inputText.trim() && !selectedFile) || !activeGroupId || activeGroup?.status === GroupStatus.ARCHIVED) return;
 
     try {
-      const sentMsg = await apiService.sendMessage(activeGroupId, inputText);
+      const sentMsg = await apiService.sendMessage(activeGroupId, inputText, selectedFile || undefined);
       setMessages(prev => [...prev, sentMsg]);
       setInputText('');
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err) {
       alert("Failed to send message.");
     }
@@ -237,6 +263,23 @@ const GroupsPage: React.FC = () => {
     }
   };
 
+  const handleKickMember = async (userId: number, userName: string) => {
+    if (!activeGroupId) return;
+    if (!confirm(`Remove ${userName} from ${activeGroup?.name}? This member will lose access to all group resources.`)) return;
+
+    setKickingMemberId(userId);
+    try {
+      await apiService.kickMember(activeGroupId, String(userId));
+      alert(`${userName} has been removed from the group.`);
+      await fetchGroupMembers(activeGroupId);
+      await fetchMyGroups();
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove member.');
+    } finally {
+      setKickingMemberId(null);
+    }
+  };
+
   const getStatusBadge = (status: GroupStatus) => {
     switch (status) {
       case GroupStatus.OPEN:
@@ -333,13 +376,15 @@ const GroupsPage: React.FC = () => {
                 <Mic size={18} />
                 <span className="text-[10px] font-black uppercase">Live Room</span>
               </button>
-              <button
-                onClick={() => setShowMembersModal(true)}
-                className="flex flex-col items-center justify-center p-4 bg-purple-50 text-purple-600 rounded-2xl hover:bg-purple-100 transition-all gap-2"
-              >
-                <UsersIcon size={18} />
-                <span className="text-[10px] font-black uppercase">Members</span>
-              </button>
+              {(activeGroup.is_member || isLeader) && (
+                <button
+                  onClick={() => setShowMembersModal(true)}
+                  className="flex flex-col items-center justify-center p-4 bg-purple-50 text-purple-600 rounded-2xl hover:bg-purple-100 transition-all gap-2"
+                >
+                  <UsersIcon size={18} />
+                  <span className="text-[10px] font-black uppercase">Members</span>
+                </button>
+              )}
               {isLeader && (
                 <button
                   onClick={() => setIsScheduleModalOpen(true)}
@@ -510,6 +555,9 @@ const GroupsPage: React.FC = () => {
                   {messages.map((msg, idx) => {
                     const isMe = msg.user_id === currentUser?.id;
                     const isGroupLeader = msg.user_id === activeGroup.creator_id;
+                    const isImage = msg.file_type?.startsWith('image/');
+                    const fileUrl = msg.file_path ? `${API_CONFIG.BASE_URL.replace('/api', '')}/storage/${msg.file_path}` : null;
+
                     return (
                       <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                         <div className="flex items-center gap-2 mb-1.5 px-2">
@@ -522,7 +570,45 @@ const GroupsPage: React.FC = () => {
                         <div className={`max-w-[85%] px-5 py-3.5 rounded-3xl text-sm font-medium leading-relaxed shadow-sm ${
                           isMe ? 'bg-orange-500 text-white rounded-tr-none' : 'bg-white border border-slate-200 text-slate-700 rounded-tl-none'
                         }`}>
-                          {msg.content}
+                          {msg.content && <div className="mb-2">{msg.content}</div>}
+                          {msg.file_path && (
+                            <div className="space-y-2">
+                              {isImage && fileUrl ? (
+                                <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="block">
+                                  <img
+                                    src={fileUrl}
+                                    alt={msg.file_name || 'Uploaded image'}
+                                    className="max-w-full max-h-64 rounded-xl border-2 border-white/20 hover:border-white/40 transition-all cursor-pointer"
+                                  />
+                                  <div className={`flex items-center gap-2 mt-2 text-xs ${isMe ? 'text-orange-100' : 'text-slate-500'}`}>
+                                    <FileIcon size={14} />
+                                    <span className="truncate">{msg.file_name}</span>
+                                  </div>
+                                </a>
+                              ) : (
+                                <a
+                                  href={fileUrl || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`flex items-center gap-3 p-3 rounded-xl transition-all ${
+                                    isMe ? 'bg-orange-600 hover:bg-orange-700' : 'bg-slate-100 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  <div className={`p-2 rounded-lg ${isMe ? 'bg-orange-700' : 'bg-white'}`}>
+                                    <FileIcon size={20} className={isMe ? 'text-white' : 'text-slate-600'} />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className={`text-sm font-bold truncate ${isMe ? 'text-white' : 'text-slate-900'}`}>
+                                      {msg.file_name}
+                                    </div>
+                                    <div className={`text-xs ${isMe ? 'text-orange-100' : 'text-slate-500'}`}>
+                                      {msg.file_size ? `${(msg.file_size / 1024).toFixed(1)} KB` : 'File'}
+                                    </div>
+                                  </div>
+                                </a>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -533,8 +619,44 @@ const GroupsPage: React.FC = () => {
             </div>
 
             <form onSubmit={handleSendMessage} className={`p-6 bg-white border-t border-slate-100 ${activeGroup.status === GroupStatus.ARCHIVED ? 'pointer-events-none opacity-50 grayscale' : ''}`}>
+              {selectedFile && (
+                <div className="mb-3 flex items-center gap-2 bg-orange-50 border border-orange-200 px-4 py-2 rounded-xl">
+                  <FileIcon size={16} className="text-orange-600" />
+                  <span className="text-sm font-semibold text-orange-900 flex-1 truncate">{selectedFile.name}</span>
+                  <span className="text-xs text-orange-600">{(selectedFile.size / 1024).toFixed(1)} KB</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFile(null);
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }}
+                    className="text-orange-600 hover:text-orange-800 transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
               <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-[2rem] border border-slate-200 focus-within:ring-2 focus-within:ring-orange-500/20 focus-within:bg-white transition-all">
-                <input 
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,.pdf,.doc,.docx,.txt"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setSelectedFile(file);
+                  }}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={activeGroup.status === GroupStatus.ARCHIVED}
+                  className="w-10 h-10 bg-white hover:bg-slate-100 text-slate-600 rounded-2xl flex items-center justify-center transition-all disabled:opacity-50 border border-slate-200"
+                  title="Attach file"
+                >
+                  <Paperclip size={18} />
+                </button>
+                <input
                   type="text"
                   disabled={activeGroup.status === GroupStatus.ARCHIVED}
                   placeholder={activeGroup.status === GroupStatus.ARCHIVED ? "Hub is archived" : "Share a thought or question..."}
@@ -542,9 +664,9 @@ const GroupsPage: React.FC = () => {
                   value={inputText}
                   onChange={e => setInputText(e.target.value)}
                 />
-                <button 
-                  type="submit" 
-                  disabled={!inputText.trim() || activeGroup.status === GroupStatus.ARCHIVED}
+                <button
+                  type="submit"
+                  disabled={(!inputText.trim() && !selectedFile) || activeGroup.status === GroupStatus.ARCHIVED}
                   className="w-10 h-10 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl flex items-center justify-center transition-all disabled:opacity-50 disabled:scale-95 shadow-lg shadow-orange-100"
                 >
                   <Send size={18} />
@@ -738,7 +860,7 @@ const GroupsPage: React.FC = () => {
         />
       )}
 
-      {showMembersModal && activeGroup && (
+      {showMembersModal && activeGroup && (activeGroup.is_member || isLeader) && (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
           <div className="bg-white rounded-[3rem] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
             {/* Header */}
@@ -801,21 +923,70 @@ const GroupsPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Member Count Info */}
-              <div className="p-6 bg-purple-50 border-2 border-purple-200 rounded-2xl">
-                <div className="flex items-center gap-3 mb-3">
+              {/* Member List */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
                   <UsersIcon className="text-purple-600" size={24} />
-                  <h4 className="text-lg font-bold text-slate-900">Member Information</h4>
+                  <h4 className="text-lg font-bold text-slate-900">Members ({activeGroup.members_count})</h4>
                 </div>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  This group currently has <span className="font-bold text-purple-600">{activeGroup.members_count} member{activeGroup.members_count !== 1 ? 's' : ''}</span> enrolled,
-                  with capacity for up to <span className="font-bold text-purple-600">{activeGroup.max_members} total members</span>.
-                  {activeGroup.members_count >= activeGroup.max_members ? (
-                    <span className="text-amber-600 font-bold"> This group is currently full.</span>
-                  ) : (
-                    <span className="text-emerald-600 font-bold"> There {activeGroup.max_members - activeGroup.members_count === 1 ? 'is' : 'are'} {activeGroup.max_members - activeGroup.members_count} spot{activeGroup.max_members - activeGroup.members_count !== 1 ? 's' : ''} available.</span>
-                  )}
-                </p>
+
+                {loadingMembers ? (
+                  <div className="flex items-center justify-center p-8">
+                    <Loader2 size={32} className="animate-spin text-purple-600" />
+                  </div>
+                ) : groupMembers.length === 0 ? (
+                  <div className="p-6 bg-slate-50 rounded-xl text-center">
+                    <p className="text-sm text-slate-600">No members found</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {groupMembers.map((member) => (
+                      <div key={member.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200 hover:bg-slate-100 transition-all">
+                        <div className={`w-12 h-12 ${member.is_leader ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'} rounded-xl flex items-center justify-center font-bold text-lg`}>
+                          {member.name[0]}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-bold text-slate-900">{member.name}</p>
+                            {member.is_leader && (
+                              <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-bold">
+                                Leader
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500">{member.email}</p>
+                          {member.major && (
+                            <p className="text-xs text-slate-600 mt-1">
+                              <span className="font-bold">Major:</span> {member.major}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right">
+                            <p className="text-xs text-slate-400">
+                              Joined {new Date(member.joined_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            </p>
+                          </div>
+                          {isLeader && !member.is_leader && (
+                            <button
+                              onClick={() => handleKickMember(member.id, member.name)}
+                              disabled={kickingMemberId === member.id}
+                              className="flex items-center gap-1.5 px-3 py-2 bg-red-500 text-white rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Remove member from group"
+                            >
+                              {kickingMemberId === member.id ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <UserX size={14} />
+                              )}
+                              Kick
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

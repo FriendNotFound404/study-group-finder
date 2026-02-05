@@ -6,8 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class Feedback extends Model
 {
-    protected $fillable = ['user_id', 'group_name', 'rating', 'text'];
-    protected $appends = ['user_name'];
+    protected $table = 'feedback';
+
+    protected $fillable = ['user_id', 'rating', 'comment'];
+
+    protected $appends = ['user_name', 'user_email'];
 
     public function user() {
         return $this->belongsTo(User::class);
@@ -15,5 +18,9 @@ class Feedback extends Model
 
     public function getUserNameAttribute() {
         return $this->user->name ?? 'Anonymous';
+    }
+
+    public function getUserEmailAttribute() {
+        return $this->user->email ?? '';
     }
 }

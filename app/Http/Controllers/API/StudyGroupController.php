@@ -8,6 +8,12 @@ use App\Models\Notification;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\JoinRequestNotification;
+use App\Mail\JoinApprovedNotification;
+use App\Mail\JoinRejectedNotification;
+use App\Mail\GroupJoinNotification;
+use App\Mail\MemberRemovedNotification;
 
 class StudyGroupController extends Controller
 {
@@ -81,9 +87,9 @@ class StudyGroupController extends Controller
         $group = StudyGroup::findOrFail($id);
         $user = Auth::user();
 
-        // Validation checks
-        if ($group->status !== 'open') {
-            return response()->json(['message' => 'Group is not accepting new members'], 400);
+        // Check if group is archived
+        if ($group->status === 'archived') {
+            return response()->json(['message' => 'This group has been archived and is no longer accepting members'], 400);
         }
 
         // Check if group would be full (count only approved members)
@@ -101,49 +107,138 @@ class StudyGroupController extends Controller
             ->where('user_id', $user->id)
             ->first();
 
-        if ($existingRequest) {
-            $status = $existingRequest->pivot->status;
-            if ($status === 'pending') {
-                return response()->json(['message' => 'Your join request is pending approval'], 400);
-            } elseif ($status === 'rejected') {
-                // Allow reapplying after rejection - update existing record
+        // Handle based on group status
+        if ($group->status === 'open') {
+            // OPEN GROUPS: Instant join without approval
+            if ($existingRequest) {
+                // Update existing record to approved
                 $group->allMemberRelations()->updateExistingPivot($user->id, [
-                    'status' => 'pending',
+                    'status' => 'approved',
+                    'approved_at' => now(),
                     'rejected_at' => null,
                     'updated_at' => now()
                 ]);
+            } else {
+                // Create new approved membership
+                $group->allMemberRelations()->attach($user->id, [
+                    'status' => 'approved',
+                    'approved_at' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
             }
+
+            // Notify Leader with group_join type (informational)
+            if ($group->creator_id !== $user->id) {
+                Notification::create([
+                    'user_id' => $group->creator_id,
+                    'type' => 'group_join',
+                    'data' => [
+                        'user_name' => $user->name,
+                        'group_id' => $group->id,
+                        'group_name' => $group->name,
+                        'message' => "{$user->name} has joined your study group '{$group->name}'."
+                    ]
+                ]);
+
+                // Send email notification
+                $leader = User::find($group->creator_id);
+                if ($leader && $leader->email) {
+                    Mail::to($leader->email)->send(new GroupJoinNotification($user->name, $group->name, $group->id));
+                }
+            }
+
+            return response()->json(['message' => 'Successfully joined the group!']);
+
         } else {
-            // Create new pending request
-            $group->allMemberRelations()->attach($user->id, [
-                'status' => 'pending',
-                'created_at' => now(),
-                'updated_at' => now()
-            ]);
-        }
+            // CLOSED GROUPS: Request-based approval workflow
+            if ($existingRequest) {
+                $status = $existingRequest->pivot->status;
+                if ($status === 'pending') {
+                    return response()->json(['message' => 'Your join request is pending approval'], 400);
+                } elseif ($status === 'rejected') {
+                    // Allow reapplying after rejection - update existing record
+                    $group->allMemberRelations()->updateExistingPivot($user->id, [
+                        'status' => 'pending',
+                        'rejected_at' => null,
+                        'updated_at' => now()
+                    ]);
+                }
+            } else {
+                // Create new pending request
+                $group->allMemberRelations()->attach($user->id, [
+                    'status' => 'pending',
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+            }
 
-        // Notify Leader with join_request type
-        if ($group->creator_id !== $user->id) {
-            Notification::create([
-                'user_id' => $group->creator_id,
-                'type' => 'join_request',
-                'data' => [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                    'group_id' => $group->id,
-                    'group_name' => $group->name,
-                    'message' => "{$user->name} wants to join '{$group->name}'."
-                ]
-            ]);
-        }
+            // Notify Leader with join_request type
+            if ($group->creator_id !== $user->id) {
+                Notification::create([
+                    'user_id' => $group->creator_id,
+                    'type' => 'join_request',
+                    'data' => [
+                        'user_id' => $user->id,
+                        'user_name' => $user->name,
+                        'group_id' => $group->id,
+                        'group_name' => $group->name,
+                        'message' => "{$user->name} wants to join '{$group->name}'."
+                    ]
+                ]);
 
-        return response()->json(['message' => 'Join request sent! Waiting for leader approval.']);
+                // Send email notification
+                $leader = User::find($group->creator_id);
+                if ($leader && $leader->email) {
+                    Mail::to($leader->email)->send(new JoinRequestNotification($user->name, $group->name, $group->id));
+                }
+            }
+
+            return response()->json(['message' => 'Join request sent! Waiting for leader approval.']);
+        }
     }
 
     public function leave($id) {
         $group = StudyGroup::findOrFail($id);
         $group->members()->detach(Auth::id());
         return response()->json(['message' => 'Left successfully']);
+    }
+
+    /**
+     * Get members of a group
+     * Only accessible by group members
+     */
+    public function getMembers($id) {
+        $group = StudyGroup::findOrFail($id);
+        $userId = Auth::id();
+
+        // Check if user is a member of this group
+        $isMember = $group->members()->where('users.id', $userId)->exists();
+        $isCreator = $group->creator_id === $userId;
+
+        if (!$isMember && !$isCreator) {
+            return response()->json(['message' => 'Unauthorized. Only group members can view the member list.'], 403);
+        }
+
+        // Get all approved members with their details
+        $members = $group->members()
+            ->select('users.id', 'users.name', 'users.email', 'users.major', 'users.role', 'group_user.approved_at')
+            ->orderByRaw('CASE WHEN users.id = ? THEN 0 ELSE 1 END', [$group->creator_id])
+            ->orderBy('group_user.approved_at', 'asc')
+            ->get()
+            ->map(function ($member) use ($group) {
+                return [
+                    'id' => $member->id,
+                    'name' => $member->name,
+                    'email' => $member->email,
+                    'major' => $member->major,
+                    'role' => $member->role,
+                    'is_leader' => $member->id === $group->creator_id,
+                    'joined_at' => $member->approved_at,
+                ];
+            });
+
+        return response()->json($members);
     }
 
     public function destroy($id) {
@@ -222,6 +317,11 @@ class StudyGroupController extends Controller
                     'message' => "Your request to join '{$group->name}' has been approved! Welcome to the group."
                 ]
             ]);
+
+            // Send email notification
+            if ($requestingUser->email) {
+                Mail::to($requestingUser->email)->send(new JoinApprovedNotification($group->name, $group->id));
+            }
         }
 
         return response()->json(['message' => 'Join request approved successfully.']);
@@ -267,8 +367,62 @@ class StudyGroupController extends Controller
                     'message' => "Your request to join '{$group->name}' was not approved at this time."
                 ]
             ]);
+
+            // Send email notification
+            if ($requestingUser->email) {
+                Mail::to($requestingUser->email)->send(new JoinRejectedNotification($group->name, $group->id));
+            }
         }
 
         return response()->json(['message' => 'Join request rejected.']);
+    }
+
+    /**
+     * Kick a member from the group
+     * Only accessible by group leader
+     */
+    public function kickMember($groupId, $userId) {
+        $group = StudyGroup::findOrFail($groupId);
+        $currentUser = Auth::user();
+
+        // Only leader can kick members
+        if ($group->creator_id !== $currentUser->id) {
+            return response()->json(['message' => 'Unauthorized. Only the group leader can remove members.'], 403);
+        }
+
+        // Cannot kick the leader themselves
+        if ($userId == $group->creator_id) {
+            return response()->json(['message' => 'The group leader cannot be removed.'], 400);
+        }
+
+        // Check if user is a member
+        $isMember = $group->members()->where('users.id', $userId)->exists();
+        if (!$isMember) {
+            return response()->json(['message' => 'This user is not a member of the group.'], 404);
+        }
+
+        // Remove the member
+        $group->members()->detach($userId);
+
+        // Notify the removed user
+        $removedUser = User::find($userId);
+        if ($removedUser) {
+            Notification::create([
+                'user_id' => $userId,
+                'type' => 'removed_from_group',
+                'data' => [
+                    'group_id' => $group->id,
+                    'group_name' => $group->name,
+                    'message' => "You have been removed from '{$group->name}'."
+                ]
+            ]);
+
+            // Send email notification
+            if ($removedUser->email) {
+                Mail::to($removedUser->email)->send(new MemberRemovedNotification($group->name, $group->id));
+            }
+        }
+
+        return response()->json(['message' => 'Member removed successfully.']);
     }
 }

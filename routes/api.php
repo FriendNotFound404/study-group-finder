@@ -9,6 +9,7 @@ use App\Http\Controllers\API\DiscoverController;
 use App\Http\Controllers\API\CalendarController;
 use App\Http\Controllers\API\ProfileController;
 use App\Http\Controllers\API\NotificationController;
+use App\Http\Controllers\API\AdminController;
 
 // Auth
 Route::post('/register', [AuthController::class, 'register']);
@@ -21,9 +22,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('groups', StudyGroupController::class);
     Route::post('/groups/{id}/join', [StudyGroupController::class, 'join']);
     Route::post('/groups/{id}/leave', [StudyGroupController::class, 'leave']);
+    Route::get('/groups/{id}/members', [StudyGroupController::class, 'getMembers']);
     Route::get('/groups/{id}/pending-requests', [StudyGroupController::class, 'pendingRequests']);
     Route::post('/groups/{groupId}/approve/{userId}', [StudyGroupController::class, 'approveRequest']);
     Route::post('/groups/{groupId}/reject/{userId}', [StudyGroupController::class, 'rejectRequest']);
+    Route::post('/groups/{groupId}/kick/{userId}', [StudyGroupController::class, 'kickMember']);
 
     // Chat
     Route::get('/groups/{id}/messages', [MessageController::class, 'index']);
@@ -53,4 +56,26 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
     Route::post('/notifications/mark-read', [NotificationController::class, 'markAsRead']);
+
+    // Admin Routes (requires admin middleware)
+    Route::middleware('admin')->prefix('admin')->group(function () {
+        // Dashboard
+        Route::get('/dashboard', [AdminController::class, 'dashboard']);
+        Route::get('/system-overview', [AdminController::class, 'getSystemOverview']);
+        Route::get('/analytics', [AdminController::class, 'getAnalytics']);
+
+        // User Management
+        Route::get('/users', [AdminController::class, 'getUsers']);
+        Route::put('/users/{id}', [AdminController::class, 'updateUser']);
+        Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
+
+        // Group Management
+        Route::get('/groups', [AdminController::class, 'getGroups']);
+        Route::put('/groups/{id}', [AdminController::class, 'updateGroup']);
+        Route::delete('/groups/{id}', [AdminController::class, 'deleteGroup']);
+
+        // Feedback Management
+        Route::get('/feedback', [AdminController::class, 'getFeedback']);
+        Route::delete('/feedback/{id}', [AdminController::class, 'deleteFeedback']);
+    });
 });

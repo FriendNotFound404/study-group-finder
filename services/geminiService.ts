@@ -7,7 +7,7 @@ export const geminiService = {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-2.0-flash-exp',
         contents: `Act as a helpful study group organizer. Create an engaging, professional study group description for a group focused on "${subject}". The primary goal is: "${goal}". Keep it concise and welcoming for university students.`,
       });
       return response.text;
@@ -23,7 +23,7 @@ export const geminiService = {
     try {
       const chatContext = messages.join("\n");
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-2.0-flash-exp',
         contents: `Summarize the following study group chat messages into key takeaways and action items for the members:\n\n${chatContext}`,
       });
       return response.text;
@@ -37,9 +37,9 @@ export const geminiService = {
     // Fix: Create a new GoogleGenAI instance right before making an API call to ensure it uses the current process.env.API_KEY
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-      // Fix: Upgraded model to gemini-3-pro-preview for complex reasoning tasks like curriculum planning
+      // Use gemini-1.5-pro for complex reasoning tasks like curriculum planning
       const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
+        model: 'gemini-1.5-pro',
         contents: `Create a highly structured 4-week study plan for university students studying "${subject}". Focus on breaking down complex topics into manageable weekly goals. Use bullet points and clear headings.`,
       });
       return response.text;

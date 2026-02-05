@@ -100,8 +100,16 @@ const LiveStudySession: React.FC<LiveStudySessionProps> = ({ onClose, subject })
               // Send input only after session promise resolves to avoid race conditions
               sessionPromise.then(session => session.sendRealtimeInput({ media: pcmBlob }));
             };
+
+            // Create a gain node set to 0 to keep processing alive without playing back
+            const gainNode = inputCtx.createGain();
+            gainNode.gain.value = 0; // Mute the microphone input playback
+
+            // Connect: microphone → scriptProcessor → gainNode (muted) → destination
+            // This keeps scriptProcessor active without creating audio feedback
             source.connect(scriptProcessor);
-            scriptProcessor.connect(inputCtx.destination);
+            scriptProcessor.connect(gainNode);
+            gainNode.connect(inputCtx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.serverContent?.outputTranscription) {
@@ -114,21 +122,46 @@ const LiveStudySession: React.FC<LiveStudySessionProps> = ({ onClose, subject })
             const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (audioData && audioContextRef.current) {
               const { output } = audioContextRef.current;
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, output.currentTime);
+
+              // Add a small buffer (lookahead) to prevent stuttering
+              const LOOKAHEAD_TIME = 0.1; // 100ms buffer
+              const currentTime = output.currentTime;
+
+              // If nextStartTime is in the past or too close, schedule immediately with buffer
+              if (nextStartTimeRef.current < currentTime + LOOKAHEAD_TIME) {
+                nextStartTimeRef.current = currentTime + LOOKAHEAD_TIME;
+              }
+
               const buffer = await decodeAudioData(decode(audioData), output, 24000, 1);
               const source = output.createBufferSource();
               source.buffer = buffer;
               source.connect(output.destination);
+
+              // Start playback at the scheduled time
               source.start(nextStartTimeRef.current);
+
+              // Update next start time for seamless playback
               nextStartTimeRef.current += buffer.duration;
+
               sourcesRef.current.add(source);
               source.onended = () => sourcesRef.current.delete(source);
             }
 
             if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => s.stop());
+              // Stop all playing audio sources
+              sourcesRef.current.forEach(s => {
+                try {
+                  s.stop();
+                } catch (e) {
+                  // Source might have already stopped
+                }
+              });
               sourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
+
+              // Reset nextStartTime to current time to prevent gaps
+              if (audioContextRef.current) {
+                nextStartTimeRef.current = audioContextRef.current.output.currentTime;
+              }
             }
           },
           onerror: (e) => {

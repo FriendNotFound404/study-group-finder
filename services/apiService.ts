@@ -1,5 +1,5 @@
 
-import { StudyGroup, Message, Feedback, User, AppNotification, PendingJoinRequest } from '../types';
+import { StudyGroup, Message, Feedback, User, AppNotification, PendingJoinRequest, GroupMember } from '../types';
 import { API_CONFIG } from '../constants';
 
 const BASE_URL = API_CONFIG.BASE_URL;
@@ -91,6 +91,13 @@ export const apiService = {
     await handleResponse(res);
   },
 
+  async getGroupMembers(groupId: string): Promise<GroupMember[]> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/members`, {
+      headers: getHeaders()
+    });
+    return handleResponse(res);
+  },
+
   async getPendingRequests(groupId: string): Promise<PendingJoinRequest[]> {
     const res = await fetch(`${BASE_URL}/groups/${groupId}/pending-requests`, {
       headers: getHeaders()
@@ -114,17 +121,43 @@ export const apiService = {
     await handleResponse(res);
   },
 
+  async kickMember(groupId: string, userId: string): Promise<void> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/kick/${userId}`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    await handleResponse(res);
+  },
+
   // Messages
   async getMessages(groupId: string): Promise<Message[]> {
     const res = await fetch(`${BASE_URL}/groups/${groupId}/messages`, { headers: getHeaders() });
     return handleResponse(res);
   },
 
-  async sendMessage(groupId: string, content: string): Promise<Message> {
+  async sendMessage(groupId: string, content: string, file?: File): Promise<Message> {
+    const formData = new FormData();
+    if (content) formData.append('content', content);
+    if (file) formData.append('file', file);
+
+    const userStr = localStorage.getItem('auth_user');
+    let token = '';
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        token = user.token || '';
+      } catch (e) {
+        console.error("Auth token parse error", e);
+      }
+    }
+
     const res = await fetch(`${BASE_URL}/groups/${groupId}/messages`, {
       method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify({ content })
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: formData
     });
     return handleResponse(res);
   },

@@ -41,6 +41,10 @@ export interface Message {
   user_id: string;
   user_name: string;
   content: string;
+  file_path?: string;
+  file_name?: string;
+  file_type?: string;
+  file_size?: number;
   created_at: string;
 }
 
@@ -66,7 +70,7 @@ export interface Event {
 export interface AppNotification {
   id: number;
   user_id: number;
-  type: 'message' | 'group_join' | 'event' | 'join_request' | 'join_approved' | 'join_rejected';
+  type: 'message' | 'group_join' | 'event' | 'join_request' | 'join_approved' | 'join_rejected' | 'removed_from_group';
   data: {
     user_id?: number;
     user_name?: string;
@@ -84,6 +88,16 @@ export interface PendingJoinRequest {
   email: string;
   major?: string;
   requested_at: string;
+}
+
+export interface GroupMember {
+  id: number;
+  name: string;
+  email: string;
+  major?: string;
+  role: string;
+  is_leader: boolean;
+  joined_at: string;
 }
 
 export interface AuthState {
