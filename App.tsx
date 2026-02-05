@@ -1,14 +1,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { 
-  Home, 
-  Compass, 
-  Users, 
-  Star, 
-  Calendar as CalendarIcon, 
-  User as UserIcon, 
-  Settings, 
+import {
+  Home,
+  Users,
+  Star,
+  Calendar as CalendarIcon,
+  User as UserIcon,
+  Settings,
   LogOut,
   Search,
   Bell,
@@ -18,7 +17,6 @@ import {
 } from 'lucide-react';
 
 import HomePage from './components/HomePage';
-import DiscoverPage from './components/DiscoverPage';
 import GroupsPage from './components/GroupsPage';
 import FeedbackPage from './components/FeedbackPage';
 import CalendarPage from './components/CalendarPage';
@@ -145,7 +143,6 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
 
         <nav className="flex-1 px-4 space-y-1">
           <SidebarLink to="/home" icon={<Home size={20} />} label="Home" />
-          <SidebarLink to="/discover" icon={<Compass size={20} />} label="Discover" />
           <SidebarLink to="/groups" icon={<Users size={20} />} label="My Groups" />
           <SidebarLink to="/feedback" icon={<Star size={20} />} label="Feedback" />
           <SidebarLink to="/calendar" icon={<CalendarIcon size={20} />} label="Calendar" />
@@ -255,9 +252,6 @@ const App: React.FC = () => {
         
         <Route path="/home" element={
           user ? <Layout user={user} onLogout={handleLogout}><HomePage /></Layout> : <Navigate to="/login" />
-        } />
-        <Route path="/discover" element={
-          user ? <Layout user={user} onLogout={handleLogout}><DiscoverPage /></Layout> : <Navigate to="/login" />
         } />
         <Route path="/groups" element={
           user ? <Layout user={user} onLogout={handleLogout}><GroupsPage /></Layout> : <Navigate to="/login" />
