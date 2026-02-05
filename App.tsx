@@ -193,10 +193,11 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
                 )}
               </button>
               {isNotifOpen && (
-                <NotificationDropdown 
-                  notifications={notifications} 
-                  onMarkRead={markAllRead} 
+                <NotificationDropdown
+                  notifications={notifications}
+                  onMarkRead={markAllRead}
                   onClose={() => setNotifOpen(false)}
+                  onRefresh={fetchNotifications}
                 />
               )}
             </div>

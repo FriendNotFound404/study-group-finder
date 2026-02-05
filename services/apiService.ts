@@ -1,5 +1,5 @@
 
-import { StudyGroup, Message, Feedback, User, AppNotification } from '../types';
+import { StudyGroup, Message, Feedback, User, AppNotification, PendingJoinRequest } from '../types';
 import { API_CONFIG } from '../constants';
 
 const BASE_URL = API_CONFIG.BASE_URL;
@@ -85,6 +85,29 @@ export const apiService = {
 
   async leaveGroup(id: string): Promise<void> {
     const res = await fetch(`${BASE_URL}/groups/${id}/leave`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    await handleResponse(res);
+  },
+
+  async getPendingRequests(groupId: string): Promise<PendingJoinRequest[]> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/pending-requests`, {
+      headers: getHeaders()
+    });
+    return handleResponse(res);
+  },
+
+  async approveJoinRequest(groupId: string, userId: string): Promise<void> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/approve/${userId}`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    await handleResponse(res);
+  },
+
+  async rejectJoinRequest(groupId: string, userId: string): Promise<void> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/reject/${userId}`, {
       method: 'POST',
       headers: getHeaders()
     });

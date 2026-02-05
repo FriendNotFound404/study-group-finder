@@ -21,6 +21,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('groups', StudyGroupController::class);
     Route::post('/groups/{id}/join', [StudyGroupController::class, 'join']);
     Route::post('/groups/{id}/leave', [StudyGroupController::class, 'leave']);
+    Route::get('/groups/{id}/pending-requests', [StudyGroupController::class, 'pendingRequests']);
+    Route::post('/groups/{groupId}/approve/{userId}', [StudyGroupController::class, 'approveRequest']);
+    Route::post('/groups/{groupId}/reject/{userId}', [StudyGroupController::class, 'rejectRequest']);
 
     // Chat
     Route::get('/groups/{id}/messages', [MessageController::class, 'index']);

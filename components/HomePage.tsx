@@ -116,12 +116,18 @@ const HomePage: React.FC = () => {
     });
   }, [groups, searchQuery, facultyFilter, subjectFilter, locationFilter, statusFilter]);
 
-  const handleJoinLeave = async (id: string, currentlyMember: boolean) => {
+  const handleJoinLeave = async (id: string, currentlyMember: boolean, hasPendingRequest: boolean) => {
     try {
       if (currentlyMember) {
         await apiService.leaveGroup(id);
+        alert('You have left the group.');
+      } else if (hasPendingRequest) {
+        // User clicked again while request is pending - show status
+        alert('Your join request is pending. The leader will review it soon!');
+        return;
       } else {
         await apiService.joinGroup(id);
+        alert('Join request sent! You will be notified when the leader reviews your request.');
       }
       await loadAllData();
     } catch (err: any) {
@@ -475,8 +481,34 @@ const HomePage: React.FC = () => {
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {discoverSubjects.slice(0, 12).map((subj, idx) => (
-                  <div key={idx} className="bg-white p-6 rounded-2xl border border-slate-200 text-center hover:border-orange-500 transition-all cursor-pointer group shadow-sm">
-                    <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-3 group-hover:bg-orange-50 group-hover:scale-110 transition-all">
+                  <div
+                    key={idx}
+                    onClick={() => {
+                      // Toggle filter: if same subject is clicked, clear it
+                      if (subjectFilter === subj.subject) {
+                        setSubjectFilter('');
+                      } else {
+                        setSubjectFilter(subj.subject);
+                        // Scroll to the all groups section
+                        setTimeout(() => {
+                          const allGroupsSection = document.querySelector('[data-section="all-groups"]');
+                          if (allGroupsSection) {
+                            allGroupsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }
+                        }, 100);
+                      }
+                    }}
+                    className={`bg-white p-6 rounded-2xl border text-center transition-all cursor-pointer group shadow-sm ${
+                      subjectFilter === subj.subject
+                        ? 'border-orange-500 bg-orange-50 shadow-md'
+                        : 'border-slate-200 hover:border-orange-500'
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-all ${
+                      subjectFilter === subj.subject
+                        ? 'bg-orange-100'
+                        : 'bg-slate-50 group-hover:bg-orange-50'
+                    }`}>
                       <BookOpen className="text-orange-500" size={20} />
                     </div>
                     <h3 className="font-bold text-slate-900 mb-1 text-sm">{subj.subject}</h3>
@@ -488,11 +520,18 @@ const HomePage: React.FC = () => {
           )}
 
           {/* All Groups Section */}
-          <div className="space-y-4">
+          <div className="space-y-4" data-section="all-groups">
             <div className="flex items-center gap-3">
               <TrendingUp className="text-orange-500" size={24} />
               <div>
-                <h2 className="text-xl font-bold text-slate-900">All Study Groups</h2>
+                <h2 className="text-xl font-bold text-slate-900">
+                  All Study Groups
+                  {subjectFilter && (
+                    <span className="ml-2 text-sm font-normal text-orange-500">
+                      (Filtered by: {subjectFilter})
+                    </span>
+                  )}
+                </h2>
                 <p className="text-sm text-slate-500">Browse all available study sessions</p>
               </div>
             </div>
@@ -525,7 +564,7 @@ const HomePage: React.FC = () => {
                 const isFull = group.members_count >= group.max_members;
                 const isClosed = group.status === GroupStatus.CLOSED;
                 const isArchived = group.status === GroupStatus.ARCHIVED;
-                const canJoin = !group.is_member && !isFull && !isClosed && !isArchived;
+                const canJoin = !group.is_member && !group.has_pending_request && !isFull && !isClosed && !isArchived;
 
                 return (
                   <div key={group.id} className={`bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm hover:shadow-xl hover:shadow-slate-100 transition-all group relative overflow-hidden ${isArchived ? 'opacity-75 grayscale-[0.5]' : ''}`}>
@@ -571,15 +610,29 @@ const HomePage: React.FC = () => {
 
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={() => handleJoinLeave(group.id, !!group.is_member)}
-                        disabled={!canJoin && !group.is_member}
+                        onClick={() => handleJoinLeave(group.id, !!group.is_member, !!group.has_pending_request)}
+                        disabled={(!canJoin && !group.is_member && !group.has_pending_request)}
                         className={`flex-1 md:flex-none px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
                           group.is_member
                             ? 'bg-white border-2 border-red-100 text-red-500 hover:bg-red-50'
-                            : isArchived ? 'bg-slate-200 text-slate-400' : isClosed ? 'bg-amber-100 text-amber-500' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-xl shadow-orange-100'
+                            : group.has_pending_request
+                              ? 'bg-amber-50 border-2 border-amber-200 text-amber-600'
+                            : isArchived ? 'bg-slate-200 text-slate-400'
+                            : isClosed ? 'bg-amber-100 text-amber-500'
+                            : 'bg-orange-500 text-white hover:bg-orange-600 shadow-xl shadow-orange-100'
                         } disabled:opacity-80`}
                       >
-                        {group.is_member ? 'Leave Group' : isArchived ? 'Hub Archived' : isClosed ? 'Closed Hub' : isFull ? 'Hub Full' : 'Join Session'}
+                        {group.is_member
+                          ? 'Leave Group'
+                          : group.has_pending_request
+                            ? 'Request Pending...'
+                          : isArchived
+                            ? 'Hub Archived'
+                          : isClosed
+                            ? 'Closed Hub'
+                          : isFull
+                            ? 'Hub Full'
+                          : 'Join Session'}
                       </button>
                       <Link to={`/groups?group=${group.id}`} className="px-6 py-4 text-slate-400 hover:text-slate-900 font-black text-xs uppercase tracking-widest transition-colors">
                         Workspace

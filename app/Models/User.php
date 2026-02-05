@@ -38,7 +38,19 @@ class User extends Authenticatable
     }
 
     public function joinedGroups() {
-        return $this->belongsToMany(StudyGroup::class, 'group_user', 'user_id', 'group_id')->withTimestamps();
+        // Only approved memberships
+        return $this->belongsToMany(StudyGroup::class, 'group_user', 'user_id', 'group_id')
+            ->withPivot('status', 'approved_at', 'rejected_at')
+            ->wherePivot('status', 'approved')
+            ->withTimestamps();
+    }
+
+    public function pendingGroupRequests() {
+        // Groups where user has pending requests
+        return $this->belongsToMany(StudyGroup::class, 'group_user', 'user_id', 'group_id')
+            ->withPivot('status', 'approved_at', 'rejected_at')
+            ->wherePivot('status', 'pending')
+            ->withTimestamps();
     }
 
     public function messages() {

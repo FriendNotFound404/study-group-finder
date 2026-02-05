@@ -31,6 +31,8 @@ export interface StudyGroup {
   status: GroupStatus;
   created_at: string;
   is_member?: boolean;
+  has_pending_request?: boolean;
+  pending_requests_count?: number;
 }
 
 export interface Message {
@@ -64,14 +66,24 @@ export interface Event {
 export interface AppNotification {
   id: number;
   user_id: number;
-  type: 'message' | 'group_join' | 'event';
+  type: 'message' | 'group_join' | 'event' | 'join_request' | 'join_approved' | 'join_rejected';
   data: {
+    user_id?: number;
     user_name?: string;
+    group_id?: string;
     group_name?: string;
     message: string;
   };
   read_at: string | null;
   created_at: string;
+}
+
+export interface PendingJoinRequest {
+  id: string;
+  name: string;
+  email: string;
+  major?: string;
+  requested_at: string;
 }
 
 export interface AuthState {

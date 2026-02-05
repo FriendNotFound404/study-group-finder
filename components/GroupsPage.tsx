@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2 } from 'lucide-react';
+import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2, Bell } from 'lucide-react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { StudyGroup, Message, User, GroupStatus } from '../types';
 import { geminiService } from '../services/geminiService';
 import { apiService } from '../services/apiService';
 import LiveStudySession from './LiveStudySession';
+import PendingRequestsModal from './PendingRequestsModal';
 // FIX: Import API_CONFIG from constants to resolve reference error in handleDeleteGroup
 import { API_CONFIG } from '../constants';
 
@@ -24,7 +25,9 @@ const GroupsPage: React.FC = () => {
   const [showLiveSession, setShowLiveSession] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  
+  const [showPendingRequestsModal, setShowPendingRequestsModal] = useState(false);
+  const [showMembersModal, setShowMembersModal] = useState(false);
+
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [newMeeting, setNewMeeting] = useState({ title: '', start_time: '', location: '' });
   const [scheduling, setScheduling] = useState(false);
@@ -322,7 +325,7 @@ const GroupsPage: React.FC = () => {
                 {isGeneratingPlan ? <Loader2 size={18} className="animate-spin" /> : <BookOpen size={18} />}
                 <span className="text-[10px] font-black uppercase">Study Plan</span>
               </button>
-              <button 
+              <button
                 onClick={() => setShowLiveSession(true)}
                 disabled={activeGroup.status === GroupStatus.ARCHIVED}
                 className="flex flex-col items-center justify-center p-4 bg-orange-50 text-orange-600 rounded-2xl hover:bg-orange-100 transition-all gap-2 disabled:opacity-50"
@@ -330,8 +333,15 @@ const GroupsPage: React.FC = () => {
                 <Mic size={18} />
                 <span className="text-[10px] font-black uppercase">Live Room</span>
               </button>
+              <button
+                onClick={() => setShowMembersModal(true)}
+                className="flex flex-col items-center justify-center p-4 bg-purple-50 text-purple-600 rounded-2xl hover:bg-purple-100 transition-all gap-2"
+              >
+                <UsersIcon size={18} />
+                <span className="text-[10px] font-black uppercase">Members</span>
+              </button>
               {isLeader && (
-                <button 
+                <button
                   onClick={() => setIsScheduleModalOpen(true)}
                   disabled={activeGroup.status === GroupStatus.ARCHIVED}
                   className="flex flex-col items-center justify-center p-4 bg-emerald-50 text-emerald-600 rounded-2xl hover:bg-emerald-100 transition-all gap-2 col-span-2 disabled:opacity-50"
@@ -369,7 +379,16 @@ const GroupsPage: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button 
+                {isLeader && activeGroup.pending_requests_count > 0 && (
+                  <button
+                    onClick={() => setShowPendingRequestsModal(true)}
+                    className="relative flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-600 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-amber-100 transition-all"
+                  >
+                    <Bell size={16} />
+                    <span>{activeGroup.pending_requests_count} Request{activeGroup.pending_requests_count !== 1 ? 's' : ''}</span>
+                  </button>
+                )}
+                <button
                   onClick={handleSummarize}
                   disabled={isSummarizing || activeGroup.status === GroupStatus.ARCHIVED}
                   className="p-2.5 text-orange-500 hover:bg-orange-50 rounded-xl transition-all relative group disabled:opacity-30"
@@ -702,10 +721,115 @@ const GroupsPage: React.FC = () => {
       )}
 
       {showLiveSession && activeGroup && (
-        <LiveStudySession 
-          subject={activeGroup.subject} 
-          onClose={() => setShowLiveSession(false)} 
+        <LiveStudySession
+          subject={activeGroup.subject}
+          onClose={() => setShowLiveSession(false)}
         />
+      )}
+
+      {showPendingRequestsModal && activeGroup && (
+        <PendingRequestsModal
+          groupId={activeGroup.id}
+          groupName={activeGroup.name}
+          onClose={() => setShowPendingRequestsModal(false)}
+          onRequestProcessed={() => {
+            fetchMyGroups();
+          }}
+        />
+      )}
+
+      {showMembersModal && activeGroup && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[3rem] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="bg-purple-500 p-10 flex justify-between items-center text-white">
+              <div>
+                <h3 className="text-3xl font-black tracking-tight">Group Details</h3>
+                <p className="text-purple-100 text-sm font-bold mt-1">{activeGroup.name}</p>
+              </div>
+              <button
+                onClick={() => setShowMembersModal(false)}
+                className="bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-all"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-8 max-h-[600px] overflow-y-auto space-y-6">
+              {/* Group Info */}
+              <div className="space-y-4">
+                <div className="flex items-start gap-4 p-6 bg-slate-50 rounded-2xl border border-slate-200">
+                  <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center font-black text-2xl border border-purple-200 shrink-0">
+                    {activeGroup.name[0]}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-bold text-slate-900 text-xl mb-2">{activeGroup.name}</h4>
+                    <p className="text-sm text-slate-600 mb-3">{activeGroup.description}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <span className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs font-bold">
+                        {activeGroup.subject}
+                      </span>
+                      <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">
+                        {activeGroup.faculty}
+                      </span>
+                      {getStatusBadge(activeGroup.status)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Details Grid */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Leader</p>
+                    <p className="text-sm font-bold text-slate-900">{activeGroup.creator_name}</p>
+                  </div>
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Members</p>
+                    <p className="text-sm font-bold text-slate-900">{activeGroup.members_count} / {activeGroup.max_members}</p>
+                  </div>
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Location</p>
+                    <p className="text-sm font-bold text-slate-900">{activeGroup.location}</p>
+                  </div>
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Created</p>
+                    <p className="text-sm font-bold text-slate-900">
+                      {new Date(activeGroup.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Member Count Info */}
+              <div className="p-6 bg-purple-50 border-2 border-purple-200 rounded-2xl">
+                <div className="flex items-center gap-3 mb-3">
+                  <UsersIcon className="text-purple-600" size={24} />
+                  <h4 className="text-lg font-bold text-slate-900">Member Information</h4>
+                </div>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  This group currently has <span className="font-bold text-purple-600">{activeGroup.members_count} member{activeGroup.members_count !== 1 ? 's' : ''}</span> enrolled,
+                  with capacity for up to <span className="font-bold text-purple-600">{activeGroup.max_members} total members</span>.
+                  {activeGroup.members_count >= activeGroup.max_members ? (
+                    <span className="text-amber-600 font-bold"> This group is currently full.</span>
+                  ) : (
+                    <span className="text-emerald-600 font-bold"> There {activeGroup.max_members - activeGroup.members_count === 1 ? 'is' : 'are'} {activeGroup.max_members - activeGroup.members_count} spot{activeGroup.max_members - activeGroup.members_count !== 1 ? 's' : ''} available.</span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 bg-slate-50 border-t border-slate-100 text-center">
+              <button
+                onClick={() => setShowMembersModal(false)}
+                className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-slate-900 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
