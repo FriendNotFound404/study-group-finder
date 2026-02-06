@@ -10,7 +10,7 @@ const LandingPage: React.FC = () => {
       <header className="fixed top-0 inset-x-0 h-20 bg-white/80 backdrop-blur-md border-b border-slate-100 z-50 px-6 md:px-12 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-orange-100">AU</div>
-          <span className="text-xl font-black text-slate-900 tracking-tight">StudyHub</span>
+          <span className="text-xl font-black text-slate-900 tracking-tight">StudyGroupFinder</span>
         </div>
         <div className="hidden md:flex items-center gap-8">
           <a href="#features" className="text-sm font-bold text-slate-500 hover:text-slate-900">Features</a>
@@ -59,7 +59,7 @@ const LandingPage: React.FC = () => {
         <div className="relative">
           <div className="absolute inset-0 bg-orange-500/10 blur-[100px] rounded-full"></div>
           <div className="relative bg-white border border-slate-200 rounded-[3rem] p-4 shadow-2xl">
-            <img src="https://picsum.photos/800/600?grayscale" className="rounded-[2.5rem] w-full h-auto grayscale opacity-90" alt="Study Group" />
+            <img src="https://www.u-fukui.ac.jp/wp/wp-content/uploads/Assumption-Campus.jpg" className="rounded-[2.5rem] w-full h-auto grayscale opacity-90" alt="Study Group" />
             <div className="absolute -bottom-8 -left-8 bg-white p-6 rounded-3xl shadow-xl border border-slate-100 animate-bounce duration-[3000ms]">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>
