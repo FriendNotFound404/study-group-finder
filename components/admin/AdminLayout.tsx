@@ -42,8 +42,8 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     try {
       // Use admin-specific notification endpoints
       const [listResponse, countResponse] = await Promise.all([
-        fetch('http://localhost:8001/api/admin/notifications'),
-        fetch('http://localhost:8001/api/admin/notifications/unread-count')
+        fetch('http://localhost:8000/api/admin/notifications'),
+        fetch('http://localhost:8000/api/admin/notifications/unread-count')
       ]);
 
       const list = await listResponse.json();
@@ -65,7 +65,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const markAllRead = async () => {
     try {
       // Use admin-specific mark-read endpoint
-      await fetch('http://localhost:8001/api/admin/notifications/mark-read', {
+      await fetch('http://localhost:8000/api/admin/notifications/mark-read', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

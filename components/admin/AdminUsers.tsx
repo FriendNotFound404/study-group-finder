@@ -68,7 +68,7 @@ const AdminUsers: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/users?page=${currentPage}&search=${searchQuery}`,
+        `http://localhost:8000/api/admin/users?page=${currentPage}&search=${searchQuery}`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -131,7 +131,7 @@ const AdminUsers: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/users/${editingUser.id}`,
+        `http://localhost:8000/api/admin/users/${editingUser.id}`,
         {
           method: 'PUT',
           headers: {
@@ -163,7 +163,7 @@ const AdminUsers: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/users/${id}`,
+        `http://localhost:8000/api/admin/users/${id}`,
         {
           method: 'DELETE',
           headers: {

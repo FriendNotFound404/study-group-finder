@@ -74,7 +74,7 @@ const AdminGroups: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/groups?page=${currentPage}&search=${searchQuery}&status=${statusFilter}`,
+        `http://localhost:8000/api/admin/groups?page=${currentPage}&search=${searchQuery}&status=${statusFilter}`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -138,7 +138,7 @@ const AdminGroups: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/groups/${editingGroup.id}`,
+        `http://localhost:8000/api/admin/groups/${editingGroup.id}`,
         {
           method: 'PUT',
           headers: {
@@ -170,7 +170,7 @@ const AdminGroups: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/groups/${id}`,
+        `http://localhost:8000/api/admin/groups/${id}`,
         {
           method: 'DELETE',
           headers: {

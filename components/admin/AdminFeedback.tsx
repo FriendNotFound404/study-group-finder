@@ -52,7 +52,7 @@ const AdminFeedback: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/feedback?page=${currentPage}`,
+        `http://localhost:8000/api/admin/feedback?page=${currentPage}`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -100,7 +100,7 @@ const AdminFeedback: React.FC = () => {
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8001/api/admin/feedback/${id}`,
+        `http://localhost:8000/api/admin/feedback/${id}`,
         {
           method: 'DELETE',
           headers: {
