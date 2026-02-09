@@ -8,9 +8,12 @@ use App\Models\StudyGroup;
 use App\Models\Message;
 use App\Models\Feedback;
 use App\Models\Notification;
+use App\Mail\UserWarnedMail;
+use App\Mail\UserBannedMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 
 class AdminController extends Controller
 {
@@ -297,5 +300,209 @@ class AdminController extends Controller
                 'average_rating' => Feedback::avg('rating') ?? 0
             ]
         ]);
+    }
+
+    /**
+     * Warn a user (from report)
+     */
+    public function warnUser(Request $request, $userId)
+    {
+        $user = User::findOrFail($userId);
+
+        // Prevent warning admin
+        if ($user->email === 'admin@au.edu') {
+            return response()->json(['message' => 'Cannot warn admin account'], 403);
+        }
+
+        $user->warnings = ($user->warnings ?? 0) + 1;
+
+        // Auto-ban if warnings reach 3
+        $autoBanned = false;
+        if ($user->warnings >= 3) {
+            $user->banned = true;
+            $autoBanned = true;
+        }
+
+        $user->save();
+
+        // Send notification to warned user
+        if ($autoBanned) {
+            $banReason = 'Automatic ban after receiving 3 warnings';
+            Notification::create([
+                'user_id' => $user->id,
+                'type' => 'user_banned',
+                'data' => [
+                    'message' => 'Your account has been banned due to multiple warnings (3/3)',
+                    'reason' => $banReason,
+                    'warnings' => $user->warnings
+                ]
+            ]);
+
+            // Send ban email if user's email is verified
+            if ($user->email_verified_at) {
+                try {
+                    Mail::to($user->email)->send(new UserBannedMail(
+                        $user->name,
+                        $banReason
+                    ));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send ban email: ' . $e->getMessage());
+                }
+            }
+        } else {
+            $warningReason = 'You have received a warning from the admin. Please review our community guidelines.';
+            Notification::create([
+                'user_id' => $user->id,
+                'type' => 'user_warned',
+                'data' => [
+                    'message' => 'You have received a warning from the admin',
+                    'warnings' => $user->warnings,
+                    'max_warnings' => 3
+                ]
+            ]);
+
+            // Send warning email if user's email is verified
+            if ($user->email_verified_at) {
+                try {
+                    Mail::to($user->email)->send(new UserWarnedMail(
+                        $user->name,
+                        $warningReason,
+                        $user->warnings
+                    ));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send warning email: ' . $e->getMessage());
+                }
+            }
+        }
+
+        return response()->json([
+            'message' => 'User warned successfully',
+            'user' => $user,
+            'auto_banned' => $autoBanned
+        ]);
+    }
+
+    /**
+     * Ban a user directly
+     */
+    public function banUser($userId)
+    {
+        $user = User::findOrFail($userId);
+
+        // Prevent banning admin
+        if ($user->email === 'admin@au.edu') {
+            return response()->json(['message' => 'Cannot ban admin account'], 403);
+        }
+
+        $user->banned = true;
+        $user->save();
+
+        $banReason = 'Direct ban by administrator. Please contact support for assistance.';
+
+        // Send notification to banned user
+        Notification::create([
+            'user_id' => $user->id,
+            'type' => 'user_banned',
+            'data' => [
+                'message' => 'Your account has been banned by an administrator',
+                'reason' => $banReason,
+                'contact' => 'Please contact support for assistance'
+            ]
+        ]);
+
+        // Send ban email if user's email is verified
+        if ($user->email_verified_at) {
+            try {
+                Mail::to($user->email)->send(new UserBannedMail(
+                    $user->name,
+                    $banReason
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send ban email: ' . $e->getMessage());
+            }
+        }
+
+        return response()->json([
+            'message' => 'User banned successfully',
+            'user' => $user
+        ]);
+    }
+
+    /**
+     * Unban a user
+     */
+    public function unbanUser($userId)
+    {
+        $user = User::findOrFail($userId);
+
+        $user->banned = false;
+        $user->warnings = 0; // Reset warnings when unbanning
+        $user->save();
+
+        return response()->json([
+            'message' => 'User unbanned successfully',
+            'user' => $user
+        ]);
+    }
+
+    /**
+     * Get admin notifications (report submissions)
+     */
+    public function getNotifications()
+    {
+        // Get admin user
+        $admin = User::where('email', 'admin@au.edu')->first();
+
+        if (!$admin) {
+            return response()->json([]);
+        }
+
+        // Get only report-related notifications for admin
+        $notifications = Notification::where('user_id', $admin->id)
+            ->where('type', 'report_submitted')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json($notifications);
+    }
+
+    /**
+     * Get unread notification count for admin
+     */
+    public function getUnreadCount()
+    {
+        // Get admin user
+        $admin = User::where('email', 'admin@au.edu')->first();
+
+        if (!$admin) {
+            return response()->json(['count' => 0]);
+        }
+
+        $count = Notification::where('user_id', $admin->id)
+            ->where('type', 'report_submitted')
+            ->whereNull('read_at')
+            ->count();
+
+        return response()->json(['count' => $count]);
+    }
+
+    /**
+     * Mark all admin notifications as read
+     */
+    public function markNotificationsAsRead()
+    {
+        // Get admin user
+        $admin = User::where('email', 'admin@au.edu')->first();
+
+        if (!$admin) {
+            return response()->json(['message' => 'Admin not found'], 404);
+        }
+
+        Notification::where('user_id', $admin->id)
+            ->where('type', 'report_submitted')
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+
+        return response()->json(['message' => 'All notifications marked as read']);
     }
 }

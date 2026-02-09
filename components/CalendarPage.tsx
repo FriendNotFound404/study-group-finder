@@ -1,28 +1,98 @@
 
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Share2, Plus, Calendar as CalendarIcon, MapPin, Clock, Loader2, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ChevronLeft, ChevronRight, Share2, Plus, Calendar as CalendarIcon, MapPin, Clock, Loader2, X, Repeat, Users, Send } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/apiService';
+import { StudyGroup } from '../types';
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const CalendarPage: React.FC = () => {
+  const navigate = useNavigate();
   const [events, setEvents] = useState<any[]>([]);
+  const [groups, setGroups] = useState<StudyGroup[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Get current user
+  const currentUser = useMemo(() => {
+    try {
+      const saved = localStorage.getItem('auth_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  }, []);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newEvent, setNewEvent] = useState({ title: '', type: 'General', start_time: '', location: '' });
+  const [newEvent, setNewEvent] = useState({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none' });
+  const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
+  const [sharingToGroup, setSharingToGroup] = useState(false);
+  const [showShareMenu, setShowShareMenu] = useState(false);
+
+  const now = new Date();
+  const [currentMonth, setCurrentMonth] = useState(now.getMonth());
+  const [currentYear, setCurrentYear] = useState(now.getFullYear());
 
   const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const days = Array.from({ length: 31 }, (_, i) => i + 1);
+
+  // Build group_id → group map
+  const groupMap = useMemo(() => {
+    const map: Record<string, StudyGroup> = {};
+    groups.forEach(g => { map[g.id] = g; });
+    return map;
+  }, [groups]);
+
+  const getGroupName = (groupId?: string) => groupId && groupMap[groupId] ? groupMap[groupId].name : null;
+
+  // Check if current user can delete an event
+  const canDeleteEvent = (event: any) => {
+    if (!currentUser) return false;
+    const userId = String(currentUser.id);
+    // User created this event
+    if (String(event.user_id) === userId) return true;
+    // User is group leader of the event's group
+    if (event.group_id && groupMap[event.group_id] && String(groupMap[event.group_id].creator_id) === userId) return true;
+    return false;
+  };
+
+  // Calculate calendar grid for the current month
+  const calendarDays = useMemo(() => {
+    const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const emptyCells = Array.from({ length: firstDay }, (_, i) => ({ key: `empty-${i}`, day: 0 }));
+    const dayCells = Array.from({ length: daysInMonth }, (_, i) => ({ key: `day-${i + 1}`, day: i + 1 }));
+    return [...emptyCells, ...dayCells];
+  }, [currentMonth, currentYear]);
+
+  // Filter events for the current month
+  const monthEvents = useMemo(() => {
+    return events.filter(e => {
+      const d = new Date(e.start_time);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    });
+  }, [events, currentMonth, currentYear]);
+
+  // Upcoming events (from today forward, sorted)
+  const upcomingEvents = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return events
+      .filter(e => new Date(e.start_time) >= today)
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  }, [events]);
 
   useEffect(() => {
-    loadEvents();
+    loadData();
   }, []);
 
-  const loadEvents = async () => {
+  const loadData = async () => {
     setLoading(true);
     try {
-      const data = await apiService.getEvents();
-      setEvents(data);
+      const [eventsData, groupsData] = await Promise.all([
+        apiService.getEvents(),
+        apiService.getGroups()
+      ]);
+      setEvents(eventsData);
+      setGroups(groupsData.filter(g => g.is_member));
     } catch (err) {
-      console.error("Failed to load events", err);
+      console.error("Failed to load data", err);
     } finally {
       setLoading(false);
     }
@@ -33,8 +103,9 @@ const CalendarPage: React.FC = () => {
     try {
       await apiService.createEvent(newEvent);
       setIsModalOpen(false);
-      loadEvents();
-      setNewEvent({ title: '', type: 'General', start_time: '', location: '' });
+      const data = await apiService.getEvents();
+      setEvents(data);
+      setNewEvent({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none' });
     } catch (err) {
       alert("Failed to create event");
     }
@@ -44,24 +115,119 @@ const CalendarPage: React.FC = () => {
     if (!confirm("Remove this event?")) return;
     try {
       await apiService.deleteEvent(id);
-      loadEvents();
+      setSelectedEvent(null);
+      const data = await apiService.getEvents();
+      setEvents(data);
     } catch (err) {
       alert("Failed to delete event");
     }
   };
 
+  const goToPrevMonth = () => {
+    if (currentMonth === 0) {
+      setCurrentMonth(11);
+      setCurrentYear(currentYear - 1);
+    } else {
+      setCurrentMonth(currentMonth - 1);
+    }
+  };
+
+  const goToNextMonth = () => {
+    if (currentMonth === 11) {
+      setCurrentMonth(0);
+      setCurrentYear(currentYear + 1);
+    } else {
+      setCurrentMonth(currentMonth + 1);
+    }
+  };
+
+  const formatShareText = () => {
+    const text = upcomingEvents.map(e => {
+      const date = new Date(e.start_time).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const loc = e.location ? ` | ${e.location}` : '';
+      const group = getGroupName(e.group_id);
+      const groupLabel = group ? ` [${group}]` : '';
+      return `• ${e.title}${groupLabel} — ${date}${loc}`;
+    }).join('\n');
+    return `My Upcoming Schedule:\n\n${text || 'No upcoming events.'}`;
+  };
+
+  const handleShareCopy = async () => {
+    const shareText = formatShareText();
+    if (navigator.share) {
+      try { await navigator.share({ title: 'My Schedule', text: shareText }); } catch {}
+    } else {
+      try {
+        await navigator.clipboard.writeText(shareText);
+        alert('Schedule copied to clipboard!');
+      } catch {
+        alert('Could not copy schedule.');
+      }
+    }
+    setShowShareMenu(false);
+  };
+
+  const handleShareToGroup = async (groupId: string) => {
+    setSharingToGroup(true);
+    try {
+      const shareText = formatShareText();
+      await apiService.sendMessage(groupId, shareText);
+      alert('Schedule shared to group chat!');
+    } catch {
+      alert('Failed to share to group chat.');
+    } finally {
+      setSharingToGroup(false);
+      setShowShareMenu(false);
+    }
+  };
+
+  const handleShareEventToGroup = async (event: any) => {
+    if (!event.group_id) return;
+    setSharingToGroup(true);
+    try {
+      const dateStr = new Date(event.start_time).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const recurrenceLabel = event.recurrence && event.recurrence !== 'none' ? ` (Repeats ${event.recurrence})` : '';
+      const locationStr = event.location ? `\nLocation: ${event.location}` : '';
+      const msg = `📅 Meeting Reminder!\n\n${event.title}\n${dateStr}${recurrenceLabel}${locationStr}`;
+      await apiService.sendMessage(event.group_id, msg);
+      alert('Shared to group chat!');
+    } catch {
+      alert('Failed to share to group chat.');
+    } finally {
+      setSharingToGroup(false);
+    }
+  };
+
+  const navigateToGroup = (groupId: string) => {
+    setSelectedEvent(null);
+    navigate(`/groups?group=${groupId}`);
+  };
+
+  const today = new Date();
+  const isToday = (day: number) => day === today.getDate() && currentMonth === today.getMonth() && currentYear === today.getFullYear();
+
+  // Groups the user is a member of (for share menu)
+  const myGroups = groups;
+
   return (
-    <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="lg:col-span-2 space-y-6">
+    <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
         <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between mb-8">
             <div>
-              <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Personal Schedule</h1>
-              <p className="text-slate-500 font-semibold text-xs uppercase tracking-widest mt-1">{events.length} sessions listed</p>
+              <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">{MONTH_NAMES[currentMonth]} {currentYear}</h1>
+              <p className="text-slate-500 font-semibold text-xs uppercase tracking-widest mt-1">{monthEvents.length} sessions this month</p>
             </div>
             <div className="flex items-center gap-2">
-              <button className="p-2 hover:bg-slate-100 rounded-xl transition-all border border-slate-100"><ChevronLeft size={20} className="text-slate-400" /></button>
-              <button className="p-2 hover:bg-slate-100 rounded-xl transition-all border border-slate-100"><ChevronRight size={20} className="text-slate-400" /></button>
+              <button onClick={goToPrevMonth} className="p-2 hover:bg-slate-100 rounded-xl transition-all border border-slate-100"><ChevronLeft size={20} className="text-slate-400" /></button>
+              <button
+                onClick={() => { setCurrentMonth(now.getMonth()); setCurrentYear(now.getFullYear()); }}
+                className="px-3 py-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:bg-slate-100 rounded-xl transition-all border border-slate-100"
+              >
+                Today
+              </button>
+              <button onClick={goToNextMonth} className="p-2 hover:bg-slate-100 rounded-xl transition-all border border-slate-100"><ChevronRight size={20} className="text-slate-400" /></button>
             </div>
           </div>
 
@@ -71,22 +237,26 @@ const CalendarPage: React.FC = () => {
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{day}</span>
               </div>
             ))}
-            {Array.from({ length: 2 }).map((_, i) => (
-              <div key={`empty-${i}`} className="bg-white h-24 md:h-32 p-2"></div>
-            ))}
-            {days.map(day => {
-              const dayEvents = events.filter(e => new Date(e.start_time).getDate() === day);
+            {calendarDays.map(cell => {
+              if (cell.day === 0) {
+                return <div key={cell.key} className="bg-white h-24 md:h-32 p-2"></div>;
+              }
+              const dayEvents = monthEvents.filter(e => new Date(e.start_time).getDate() === cell.day);
               return (
-                <div key={day} className={`bg-white h-24 md:h-32 p-3 transition-colors hover:bg-slate-50/50 group relative`}>
-                  <span className="text-sm font-bold text-slate-400">{day}</span>
+                <div key={cell.key} className={`bg-white h-24 md:h-32 p-3 transition-colors hover:bg-slate-50/50 group relative ${isToday(cell.day) ? 'ring-2 ring-inset ring-orange-400' : ''}`}>
+                  <span className={`text-sm font-bold ${isToday(cell.day) ? 'text-orange-500' : 'text-slate-400'}`}>{cell.day}</span>
                   <div className="mt-1 space-y-1">
                     {dayEvents.map(e => (
-                      <div key={e.id} className="p-1 bg-orange-500 text-white text-[8px] font-black uppercase rounded truncate shadow-sm">
+                      <button
+                        key={e.id}
+                        onClick={() => setSelectedEvent(e)}
+                        className={`w-full text-left p-1 text-white text-[8px] font-black uppercase rounded truncate shadow-sm transition-colors ${e.group_id ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-orange-500 hover:bg-orange-600'}`}
+                      >
                         {e.title}
-                      </div>
+                      </button>
                     ))}
                   </div>
-                  <button 
+                  <button
                     onClick={() => setIsModalOpen(true)}
                     className="absolute bottom-2 right-2 p-1 bg-slate-50 text-slate-300 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:text-orange-500"
                   >
@@ -103,49 +273,105 @@ const CalendarPage: React.FC = () => {
         <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Upcoming</h2>
-            <Share2 size={18} className="text-slate-400 hover:text-orange-500 cursor-pointer transition-colors" />
+            <div className="relative">
+              <button onClick={() => setShowShareMenu(!showShareMenu)} title="Share schedule">
+                <Share2 size={18} className="text-slate-400 hover:text-orange-500 cursor-pointer transition-colors" />
+              </button>
+              {showShareMenu && (
+                <div className="absolute top-8 right-0 w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                  <div className="p-2 border-b border-slate-50">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-2">Share schedule</p>
+                  </div>
+                  <button
+                    onClick={handleShareCopy}
+                    className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-2"
+                  >
+                    <Share2 size={14} />
+                    Copy / Share
+                  </button>
+                  {myGroups.length > 0 && (
+                    <>
+                      <div className="px-4 py-1.5 border-t border-slate-50">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Send to group chat</p>
+                      </div>
+                      {myGroups.map(g => (
+                        <button
+                          key={g.id}
+                          onClick={() => handleShareToGroup(g.id)}
+                          disabled={sharingToGroup}
+                          className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-orange-50 hover:text-orange-600 transition-colors flex items-center gap-2 disabled:opacity-50"
+                        >
+                          <Users size={14} />
+                          <span className="truncate">{g.name}</span>
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-          
+
           <div className="space-y-4">
             {loading ? (
               <div className="flex justify-center py-10"><Loader2 className="animate-spin text-slate-200" /></div>
             ) : (
               <>
-                {events.length === 0 && (
-                  <p className="text-center text-xs font-bold text-slate-400 uppercase py-10">No events found</p>
+                {upcomingEvents.length === 0 && (
+                  <p className="text-center text-xs font-bold text-slate-400 uppercase py-10">No upcoming events</p>
                 )}
-                {events.map((event) => (
-                  <div key={event.id} className="p-5 bg-slate-50 rounded-3xl border border-slate-100 hover:border-orange-200 transition-all cursor-pointer group relative">
-                    <button 
-                      onClick={() => handleDelete(event.id)}
-                      className="absolute top-2 right-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                {upcomingEvents.map((event) => {
+                  const groupName = getGroupName(event.group_id);
+                  return (
+                    <div
+                      key={event.id}
+                      onClick={() => setSelectedEvent(event)}
+                      className="w-full text-left p-5 bg-slate-50 rounded-3xl border border-slate-100 hover:border-orange-200 transition-all cursor-pointer group relative"
                     >
-                      <X size={14} />
-                    </button>
-                    <div className="flex justify-between items-start mb-3">
-                      <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg ${event.type === 'Exam' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                        {event.type}
-                      </span>
-                    </div>
-                    <h4 className="font-bold text-slate-900 text-base mb-3 group-hover:text-orange-500 transition-colors">{event.title}</h4>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <Clock size={14} />
-                        <span className="text-xs font-bold">{new Date(event.start_time).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                      {event.location && (
-                        <div className="flex items-center gap-2 text-slate-500">
-                          <MapPin size={14} />
-                          <span className="text-xs font-bold">{event.location}</span>
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg ${event.type === 'Exam' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                            {event.type}
+                          </span>
+                          {event.recurrence && event.recurrence !== 'none' && (
+                            <span className="flex items-center gap-1 text-[10px] font-black uppercase px-2 py-1 rounded-lg bg-blue-100 text-blue-600">
+                              <Repeat size={10} />
+                              {event.recurrence}
+                            </span>
+                          )}
+                          {groupName && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigateToGroup(event.group_id); }}
+                              className="flex items-center gap-1 text-[10px] font-black uppercase px-2 py-1 rounded-lg bg-purple-100 text-purple-600 hover:bg-purple-200 transition-colors"
+                            >
+                              <Users size={10} />
+                              {groupName}
+                            </button>
+                          )}
                         </div>
-                      )}
+                      </div>
+                      <h4 className="font-bold text-slate-900 text-base mb-3 group-hover:text-orange-500 transition-colors">{event.title}</h4>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-slate-500">
+                          <Clock size={14} />
+                          <span className="text-xs font-bold">
+                            {new Date(event.start_time).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} at {new Date(event.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        {event.location && (
+                          <div className="flex items-center gap-2 text-slate-500">
+                            <MapPin size={14} />
+                            <span className="text-xs font-bold">{event.location}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </>
             )}
 
-            <button 
+            <button
               onClick={() => setIsModalOpen(true)}
               className="w-full py-4 border-2 border-dashed border-slate-200 rounded-3xl text-slate-400 text-xs font-black uppercase tracking-widest hover:border-orange-200 hover:text-orange-500 transition-all mt-4 flex items-center justify-center gap-2"
             >
@@ -156,6 +382,7 @@ const CalendarPage: React.FC = () => {
         </div>
       </div>
 
+      {/* New Event Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl">
@@ -164,13 +391,13 @@ const CalendarPage: React.FC = () => {
               <button onClick={() => setIsModalOpen(false)}><X size={20} /></button>
             </div>
             <form onSubmit={handleAddEvent} className="p-8 space-y-4">
-              <input 
-                required placeholder="Event Title" 
+              <input
+                required placeholder="Event Title"
                 className="w-full px-5 py-3 bg-slate-50 border rounded-xl font-bold text-sm"
                 value={newEvent.title}
                 onChange={e => setNewEvent({...newEvent, title: e.target.value})}
               />
-              <select 
+              <select
                 className="w-full px-5 py-3 bg-slate-50 border rounded-xl font-bold text-sm"
                 value={newEvent.type}
                 onChange={e => setNewEvent({...newEvent, type: e.target.value})}
@@ -179,23 +406,128 @@ const CalendarPage: React.FC = () => {
                 <option>Exam</option>
                 <option>Project</option>
               </select>
-              <input 
-                type="datetime-local" required 
+              <input
+                type="datetime-local" required
                 className="w-full px-5 py-3 bg-slate-50 border rounded-xl font-bold text-sm"
                 value={newEvent.start_time}
                 onChange={e => setNewEvent({...newEvent, start_time: e.target.value})}
               />
-              <input 
-                placeholder="Location (Optional)" 
+              <input
+                placeholder="Location (Optional)"
                 className="w-full px-5 py-3 bg-slate-50 border rounded-xl font-bold text-sm"
                 value={newEvent.location}
                 onChange={e => setNewEvent({...newEvent, location: e.target.value})}
               />
+              <div className="relative">
+                <Repeat className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                <select
+                  className="w-full pl-12 pr-4 py-3 bg-slate-50 border rounded-xl font-bold text-sm appearance-none"
+                  value={newEvent.recurrence}
+                  onChange={e => setNewEvent({...newEvent, recurrence: e.target.value})}
+                >
+                  <option value="none">One-time (No repeat)</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
               <button type="submit" className="w-full py-4 bg-orange-500 text-white rounded-xl font-black text-xs uppercase tracking-widest">Create Event</button>
             </form>
           </div>
         </div>
       )}
+
+      {/* Event Detail Modal */}
+      {selectedEvent && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className={`p-8 text-white flex justify-between items-center ${selectedEvent.type === 'Exam' ? 'bg-red-500' : selectedEvent.group_id ? 'bg-emerald-500' : 'bg-orange-500'}`}>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-xl font-bold truncate">{selectedEvent.title}</h3>
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <span className="text-xs font-black uppercase bg-white/20 px-2 py-0.5 rounded-lg">{selectedEvent.type}</span>
+                  {selectedEvent.recurrence && selectedEvent.recurrence !== 'none' && (
+                    <span className="flex items-center gap-1 text-xs font-black uppercase bg-white/20 px-2 py-0.5 rounded-lg">
+                      <Repeat size={10} />
+                      {selectedEvent.recurrence}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button onClick={() => setSelectedEvent(null)} className="bg-white/20 hover:bg-white/30 p-2 rounded-xl transition-all shrink-0 ml-3"><X size={20} /></button>
+            </div>
+            <div className="p-8 space-y-4">
+              {/* Group info */}
+              {getGroupName(selectedEvent.group_id) && (
+                <button
+                  onClick={() => navigateToGroup(selectedEvent.group_id)}
+                  className="w-full flex items-center gap-3 p-4 bg-purple-50 rounded-xl border border-purple-200 hover:bg-purple-100 transition-all"
+                >
+                  <Users size={18} className="text-purple-500 shrink-0" />
+                  <div className="text-left">
+                    <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Group</p>
+                    <p className="text-sm font-bold text-purple-700">{getGroupName(selectedEvent.group_id)}</p>
+                  </div>
+                  <ChevronRight size={16} className="text-purple-300 ml-auto" />
+                </button>
+              )}
+              <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <CalendarIcon size={18} className="text-slate-400 shrink-0" />
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</p>
+                  <p className="text-sm font-bold text-slate-900">
+                    {new Date(selectedEvent.start_time).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <Clock size={18} className="text-slate-400 shrink-0" />
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Time</p>
+                  <p className="text-sm font-bold text-slate-900">
+                    {new Date(selectedEvent.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              </div>
+              {selectedEvent.location && (
+                <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <MapPin size={18} className="text-slate-400 shrink-0" />
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Location</p>
+                    <p className="text-sm font-bold text-slate-900">{selectedEvent.location}</p>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setSelectedEvent(null)}
+                  className="flex-1 py-3 border-2 border-slate-100 rounded-xl font-black text-xs uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all"
+                >
+                  Close
+                </button>
+                {selectedEvent.group_id && (
+                  <button
+                    onClick={() => handleShareEventToGroup(selectedEvent)}
+                    disabled={sharingToGroup}
+                    className="flex-1 py-3 bg-emerald-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-emerald-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {sharingToGroup ? <Loader2 size={14} className="animate-spin" /> : <><Send size={14} /> Share</>}
+                  </button>
+                )}
+                {canDeleteEvent(selectedEvent) && (
+                  <button
+                    onClick={() => handleDelete(selectedEvent.id)}
+                    className="flex-1 py-3 bg-red-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-600 transition-all"
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 };

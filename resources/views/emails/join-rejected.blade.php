@@ -1,7 +1,7 @@
 <x-mail::message>
 # Request Update
 
-Hello,
+Hello {{ $userName }},
 
 Unfortunately, your request to join **"{{ $groupName }}"** was not approved at this time.
 

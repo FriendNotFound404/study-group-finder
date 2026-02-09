@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2, Bell, UserX, Paperclip, File as FileIcon } from 'lucide-react';
+import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2, Bell, UserX, Paperclip, File as FileIcon, LogOut, Repeat, Plus } from 'lucide-react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { StudyGroup, Message, User, GroupStatus, GroupMember } from '../types';
 import { geminiService } from '../services/geminiService';
@@ -30,12 +30,39 @@ const GroupsPage: React.FC = () => {
   const [showPendingRequestsModal, setShowPendingRequestsModal] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [kickingMemberId, setKickingMemberId] = useState<number | null>(null);
+  const [leavingGroup, setLeavingGroup] = useState(false);
 
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-  const [newMeeting, setNewMeeting] = useState({ title: '', start_time: '', location: '' });
+  const [newMeeting, setNewMeeting] = useState({ title: '', start_time: '', location: '', recurrence: 'none' });
   const [scheduling, setScheduling] = useState(false);
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
+
+  // Unread message counts per group (persisted in localStorage)
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const getStoredCounts = (): Record<string, number> => {
+    try {
+      const stored = localStorage.getItem('lastSeenMessageCounts');
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  };
+  const saveStoredCounts = (counts: Record<string, number>) => {
+    localStorage.setItem('lastSeenMessageCounts', JSON.stringify(counts));
+  };
+
+  // Track last activity time per group for sorting
+  const [lastActivity, setLastActivity] = useState<Record<string, number>>({});
+  const updateLastActivity = (groupId: string) => {
+    setLastActivity(prev => ({ ...prev, [groupId]: Date.now() }));
+  };
+
+  // Meetings management state
+  const [showMeetingsModal, setShowMeetingsModal] = useState(false);
+  const [groupEvents, setGroupEvents] = useState<any[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [rescheduleEvent, setRescheduleEvent] = useState<any | null>(null);
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
 
   // Edit Group State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -57,19 +84,42 @@ const GroupsPage: React.FC = () => {
 
   const filteredMyGroups = useMemo(() => {
     if (!searchQuery) return myGroups;
-    return myGroups.filter(g => 
-      g.name.toLowerCase().includes(searchQuery) || 
+    return myGroups.filter(g =>
+      g.name.toLowerCase().includes(searchQuery) ||
       g.subject.toLowerCase().includes(searchQuery)
     );
   }, [myGroups, searchQuery]);
+
+  // Sort groups: unread messages first, then by most recent activity
+  const sortedFilteredGroups = useMemo(() => {
+    return [...filteredMyGroups].sort((a, b) => {
+      const aUnread = unreadCounts[a.id] || 0;
+      const bUnread = unreadCounts[b.id] || 0;
+
+      // Groups with unread messages always float to top
+      if (aUnread > 0 && bUnread === 0) return -1;
+      if (bUnread > 0 && aUnread === 0) return 1;
+
+      // Then sort by most recent activity
+      const aActivity = lastActivity[a.id] || 0;
+      const bActivity = lastActivity[b.id] || 0;
+      return bActivity - aActivity; // Most recent first
+    });
+  }, [filteredMyGroups, unreadCounts, lastActivity]);
 
   const activeGroup = myGroups.find(g => g.id === activeGroupId);
   const isLeader = activeGroup?.creator_id === currentUser?.id;
   const chatEndRef = useRef<HTMLDivElement>(null);
   const statusMenuRef = useRef<HTMLDivElement>(null);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const studyPlanRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchMyGroups();
+    // Request browser notification permission on mount
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
   }, []);
 
   useEffect(() => {
@@ -112,11 +162,21 @@ const GroupsPage: React.FC = () => {
 
   useEffect(() => {
     if (activeGroupId) {
+      const activeGroupName = myGroups.find(g => g.id === activeGroupId)?.name;
+      console.log(`[Group Switch] Switching to group: ${activeGroupName} (${activeGroupId})`);
+
       const fetchMessages = async () => {
         setLoadingMessages(true);
         try {
           const data = await apiService.getMessages(activeGroupId);
+          console.log(`[Group Switch] Fetched ${data.length} messages for ${activeGroupName}`);
+          // Set messages directly when group changes (don't merge with other groups)
           setMessages(data);
+          // Mark this group as seen with current message count
+          const stored = getStoredCounts();
+          stored[activeGroupId] = data.length;
+          saveStoredCounts(stored);
+          console.log(`[Group Switch] Updated stored count for ${activeGroupName}: ${data.length}`);
         } catch (err) {
           console.error("Failed to fetch messages", err);
         } finally {
@@ -126,7 +186,15 @@ const GroupsPage: React.FC = () => {
       fetchMessages();
       setSummary(null);
       setStudyPlan(null);
-      
+
+      // Clear unread badge for this group immediately
+      setUnreadCounts(prev => {
+        const next = { ...prev };
+        delete next[activeGroupId];
+        console.log(`[Group Switch] Cleared badge for ${activeGroupName}`);
+        return next;
+      });
+
       const q = searchParams.get('q');
       const newParams: any = { group: activeGroupId };
       if (q) newParams.q = q;
@@ -137,6 +205,112 @@ const GroupsPage: React.FC = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Auto-scroll to summary when it's generated
+  useEffect(() => {
+    if (summary) {
+      setTimeout(() => {
+        summaryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+    }
+  }, [summary]);
+
+  // Auto-scroll to study plan when it's generated
+  useEffect(() => {
+    if (studyPlan) {
+      setTimeout(() => {
+        studyPlanRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+    }
+  }, [studyPlan]);
+
+  // Poll for new messages in the active group (real-time feel)
+  useEffect(() => {
+    if (!activeGroupId) return;
+    const activeGroupName = myGroups.find(g => g.id === activeGroupId)?.name;
+    const interval = setInterval(async () => {
+      try {
+        const data = await apiService.getMessages(activeGroupId);
+        setMessages(data);
+        // Update stored count to prevent badge from reappearing after switching groups
+        const stored = getStoredCounts();
+        stored[activeGroupId] = data.length;
+        saveStoredCounts(stored);
+        console.log(`[Active Poll] Updated ${activeGroupName}: ${data.length} messages, stored count: ${data.length}`);
+      } catch {}
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [activeGroupId, myGroups]);
+
+  // Poll all groups for unread message counts using localStorage
+  useEffect(() => {
+    if (myGroups.length === 0) return;
+
+    const pollUnread = async () => {
+      const storedAtStart = getStoredCounts();
+      const newBaselines: Record<string, number> = {};
+      const counts: Record<string, number> = {};
+      console.log('[Polling] Starting unread poll. Active group:', activeGroupId);
+      console.log('[Polling] Stored counts:', storedAtStart);
+
+      await Promise.all(
+        myGroups.map(async (group) => {
+          if (group.id === activeGroupId) {
+            console.log(`[Polling] Skipping active group: ${group.name} (${group.id})`);
+            return;
+          }
+          try {
+            const msgs = await apiService.getMessages(group.id);
+            const currentCount = msgs.length;
+            const lastSeen = storedAtStart[group.id];
+            console.log(`[Polling] Group "${group.name}" (${group.id}): current=${currentCount}, lastSeen=${lastSeen}`);
+
+            if (lastSeen === undefined) {
+              // First time seeing this group - record baseline, no badge
+              newBaselines[group.id] = currentCount;
+              console.log(`[Polling] First time seeing "${group.name}", setting baseline to ${currentCount}`);
+            } else if (currentCount > lastSeen) {
+              const newCount = currentCount - lastSeen;
+              counts[group.id] = newCount;
+              console.log(`[Polling] NEW MESSAGES in "${group.name}": ${newCount} new (${lastSeen} → ${currentCount})`);
+
+              // Update last activity for this group to float it to top
+              updateLastActivity(group.id);
+
+              // Send browser push notification for new messages
+              if ('Notification' in window && Notification.permission === 'granted') {
+                const lastMsg = msgs[msgs.length - 1];
+                new Notification(`${group.name}`, {
+                  body: `${lastMsg?.user_name || 'Someone'}: ${lastMsg?.content || 'sent a message'}`,
+                  tag: `group-${group.id}`,
+                });
+              }
+            } else {
+              console.log(`[Polling] No new messages in "${group.name}"`);
+            }
+          } catch (err) {
+            console.error(`[Polling] Error fetching messages for "${group.name}":`, err);
+          }
+        })
+      );
+
+      // Merge new baselines with current stored counts (don't overwrite existing values)
+      if (Object.keys(newBaselines).length > 0) {
+        const currentStored = getStoredCounts(); // Re-fetch to get latest
+        const merged = { ...currentStored, ...newBaselines };
+        saveStoredCounts(merged);
+        console.log('[Polling] Saved new baselines:', newBaselines);
+      }
+
+      console.log('[Polling] Setting unread badges:', counts);
+      console.log('[Polling] Groups with unread counts:', Object.keys(counts).map(id => `${myGroups.find(g => g.id === id)?.name}(${id}): ${counts[id]}`));
+      setUnreadCounts(counts);
+    };
+
+    pollUnread();
+    const interval = setInterval(pollUnread, 15000);
+    return () => clearInterval(interval);
+  }, [myGroups, activeGroupId]);
 
   useEffect(() => {
     if (showMembersModal && activeGroupId) {
@@ -150,7 +324,17 @@ const GroupsPage: React.FC = () => {
 
     try {
       const sentMsg = await apiService.sendMessage(activeGroupId, inputText, selectedFile || undefined);
-      setMessages(prev => [...prev, sentMsg]);
+      setMessages(prev => {
+        const updated = [...prev, sentMsg];
+        // Update stored count immediately to prevent badge reappearing after switching groups
+        const stored = getStoredCounts();
+        stored[activeGroupId] = updated.length;
+        saveStoredCounts(stored);
+        console.log(`[Send Message] Sent message in ${activeGroup?.name}. Updated stored count to ${updated.length}`);
+        return updated;
+      });
+      // Update last activity when sending a message
+      updateLastActivity(activeGroupId);
       setInputText('');
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -182,13 +366,27 @@ const GroupsPage: React.FC = () => {
     setScheduling(true);
     try {
       await apiService.createEvent({
-        ...newMeeting,
+        title: newMeeting.title,
+        start_time: newMeeting.start_time,
+        location: newMeeting.location,
+        recurrence: newMeeting.recurrence,
         type: 'Group Meeting',
         group_id: activeGroupId
       });
-      setIsScheduleModalOpen(false);
-      setNewMeeting({ title: '', start_time: '', location: '' });
-      alert("Meeting scheduled! All members have been notified.");
+
+      // Share meeting details to group chat
+      const dateStr = new Date(newMeeting.start_time).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const recurrenceLabel = newMeeting.recurrence !== 'none' ? ` (Repeats ${newMeeting.recurrence})` : '';
+      const locationStr = newMeeting.location ? `\nLocation: ${newMeeting.location}` : '';
+      const chatMsg = `📅 New Meeting Scheduled!\n\n${newMeeting.title}\n${dateStr}${recurrenceLabel}${locationStr}\n\nAll members have been notified.`;
+      try {
+        const sentMsg = await apiService.sendMessage(activeGroupId, chatMsg);
+        setMessages(prev => [...prev, sentMsg]);
+      } catch {}
+
+      setNewMeeting({ title: '', start_time: '', location: '', recurrence: 'none' });
+      setShowScheduleForm(false);
+      await fetchGroupEvents(activeGroupId);
     } catch (err) {
       alert("Scheduling failed.");
     } finally {
@@ -280,6 +478,73 @@ const GroupsPage: React.FC = () => {
     }
   };
 
+  const handleLeaveGroup = async () => {
+    if (!activeGroupId || !activeGroup) return;
+    if (!confirm(`Are you sure you want to leave "${activeGroup.name}"?`)) return;
+
+    setLeavingGroup(true);
+    try {
+      await apiService.leaveGroup(activeGroupId);
+      setShowMembersModal(false);
+      setActiveGroupId(null);
+      await fetchMyGroups();
+    } catch (err: any) {
+      alert(err.message || 'Failed to leave group.');
+    } finally {
+      setLeavingGroup(false);
+    }
+  };
+
+  const fetchGroupEvents = async (groupId: string) => {
+    setLoadingEvents(true);
+    try {
+      const allEvents = await apiService.getEvents();
+      setGroupEvents(allEvents.filter((e: any) => e.group_id === groupId));
+    } catch (err) {
+      console.error("Failed to fetch events", err);
+    } finally {
+      setLoadingEvents(false);
+    }
+  };
+
+  const handleDeleteMeeting = async (eventId: string) => {
+    if (!confirm('Delete this meeting? This cannot be undone.')) return;
+    setActionLoading(eventId);
+    try {
+      await apiService.deleteEvent(eventId);
+      if (activeGroupId) await fetchGroupEvents(activeGroupId);
+    } catch (err) {
+      alert('Failed to delete meeting.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRescheduleMeeting = async () => {
+    if (!rescheduleEvent || !rescheduleTime) return;
+    setActionLoading(rescheduleEvent.id);
+    try {
+      // Delete old event then create a new one with updated time
+      await apiService.deleteEvent(rescheduleEvent.id);
+      await apiService.createEvent({
+        title: rescheduleEvent.title,
+        type: rescheduleEvent.type || 'Group Meeting',
+        start_time: rescheduleTime,
+        location: rescheduleEvent.location || '',
+        recurrence: rescheduleEvent.recurrence || 'none',
+        group_id: rescheduleEvent.group_id || activeGroupId,
+      });
+      setRescheduleEvent(null);
+      setRescheduleTime('');
+      if (activeGroupId) await fetchGroupEvents(activeGroupId);
+    } catch (err) {
+      alert('Failed to reschedule meeting.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+
   const getStatusBadge = (status: GroupStatus) => {
     switch (status) {
       case GroupStatus.OPEN:
@@ -315,43 +580,54 @@ const GroupsPage: React.FC = () => {
             </div>
           ) : (
             <>
-              {filteredMyGroups.length === 0 && searchQuery && (
+              {sortedFilteredGroups.length === 0 && searchQuery && (
                 <div className="p-8 text-center opacity-40">
                   <Search size={24} className="mx-auto mb-2" />
                   <p className="text-xs font-bold uppercase tracking-widest">No matching groups</p>
                 </div>
               )}
-              {filteredMyGroups.map(group => (
-                <button 
-                  key={group.id}
-                  onClick={() => setActiveGroupId(group.id)}
-                  className={`w-full text-left p-5 rounded-[2rem] border transition-all ${
-                    activeGroupId === group.id 
-                      ? 'bg-orange-500 border-orange-500 text-white shadow-xl shadow-orange-100 scale-[1.02]' 
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  } ${group.status === GroupStatus.ARCHIVED ? 'grayscale opacity-80' : ''}`}
-                >
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${activeGroupId === group.id ? 'bg-white/20' : 'bg-orange-100 text-orange-600'}`}>
-                      {group.name[0]}
-                    </div>
-                    <div className="flex-1 flex items-center justify-between">
-                      <span className={`text-[10px] font-black uppercase tracking-widest ${activeGroupId === group.id ? 'text-orange-100' : 'text-slate-400'}`}>
-                        {group.subject}
+              {sortedFilteredGroups.map(group => {
+                const unread = unreadCounts[group.id] || 0;
+                if (unread > 0) {
+                  console.log(`[Badge] Group "${group.name}" (${group.id}) has ${unread} unread messages. Active: ${activeGroupId === group.id}`);
+                }
+                return (
+                  <button
+                    key={group.id}
+                    onClick={() => setActiveGroupId(group.id)}
+                    className={`w-full text-left p-5 rounded-[2rem] border transition-all relative ${
+                      activeGroupId === group.id
+                        ? 'bg-orange-500 border-orange-500 text-white shadow-xl shadow-orange-100 scale-[1.02]'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    } ${group.status === GroupStatus.ARCHIVED ? 'grayscale opacity-80' : ''}`}
+                  >
+                    {unread > 0 && activeGroupId !== group.id && (
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[22px] h-[22px] px-1.5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg shadow-red-200 animate-in zoom-in duration-200">
+                        {unread}
                       </span>
-                      {group.status !== GroupStatus.OPEN && (
-                         <span className={`${activeGroupId === group.id ? 'text-white/60' : 'text-slate-300'}`}>
-                            {group.status === GroupStatus.ARCHIVED ? <Archive size={10} /> : <LockIcon size={10} />}
-                         </span>
-                      )}
+                    )}
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${activeGroupId === group.id ? 'bg-white/20' : 'bg-orange-100 text-orange-600'}`}>
+                        {group.name[0]}
+                      </div>
+                      <div className="flex-1 flex items-center justify-between">
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${activeGroupId === group.id ? 'text-orange-100' : 'text-slate-400'}`}>
+                          {group.subject}
+                        </span>
+                        {group.status !== GroupStatus.OPEN && (
+                           <span className={`${activeGroupId === group.id ? 'text-white/60' : 'text-slate-300'}`}>
+                              {group.status === GroupStatus.ARCHIVED ? <Archive size={10} /> : <LockIcon size={10} />}
+                           </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <h3 className="font-bold truncate">{group.name}</h3>
-                  <p className={`text-[10px] font-bold mt-1 ${activeGroupId === group.id ? 'text-orange-50' : 'text-slate-400'}`}>
-                    {group.members_count} Members • {group.status}
-                  </p>
-                </button>
-              ))}
+                    <h3 className="font-bold truncate">{group.name}</h3>
+                    <p className={`text-[10px] font-bold mt-1 ${activeGroupId === group.id ? 'text-orange-50' : 'text-slate-400'}`}>
+                      {group.members_count} Members • {group.status}
+                    </p>
+                  </button>
+                );
+              })}
             </>
           )}
         </div>
@@ -387,12 +663,12 @@ const GroupsPage: React.FC = () => {
               )}
               {isLeader && (
                 <button
-                  onClick={() => setIsScheduleModalOpen(true)}
+                  onClick={() => { setShowMeetingsModal(true); setShowScheduleForm(false); if (activeGroupId) fetchGroupEvents(activeGroupId); }}
                   disabled={activeGroup.status === GroupStatus.ARCHIVED}
                   className="flex flex-col items-center justify-center p-4 bg-emerald-50 text-emerald-600 rounded-2xl hover:bg-emerald-100 transition-all gap-2 col-span-2 disabled:opacity-50"
                 >
                   <CalendarIcon size={18} />
-                  <span className="text-[10px] font-black uppercase">Schedule Meeting</span>
+                  <span className="text-[10px] font-black uppercase">Meetings</span>
                 </button>
               )}
             </div>
@@ -419,7 +695,15 @@ const GroupsPage: React.FC = () => {
                     ) : (
                        <span className="w-2 h-2 bg-slate-300 rounded-full"></span>
                     )}
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{activeGroup.members_count} members enrolled • Led by {activeGroup.creator_name}</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                      {activeGroup.members_count} members enrolled • Led by{' '}
+                      <Link
+                        to={`/profile/${activeGroup.creator_id}`}
+                        className="hover:text-orange-500 transition-colors cursor-pointer"
+                      >
+                        {activeGroup.creator_name}
+                      </Link>
+                    </span>
                   </div>
                 </div>
               </div>
@@ -518,7 +802,7 @@ const GroupsPage: React.FC = () => {
               ) : (
                 <>
                   {summary && (
-                    <div className="bg-orange-50 border border-orange-100 p-5 rounded-3xl shadow-sm">
+                    <div ref={summaryRef} className="bg-orange-50 border border-orange-100 p-5 rounded-3xl shadow-sm">
                       <div className="flex items-center gap-2 text-orange-600 mb-2">
                         <Sparkles size={16} />
                         <span className="text-xs font-bold uppercase tracking-widest">AI Catch-up</span>
@@ -529,7 +813,7 @@ const GroupsPage: React.FC = () => {
                   )}
 
                   {studyPlan && (
-                    <div className="bg-blue-50 border border-blue-100 p-6 rounded-3xl shadow-sm mb-6">
+                    <div ref={studyPlanRef} className="bg-blue-50 border border-blue-100 p-6 rounded-3xl shadow-sm mb-6">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2 text-blue-600">
                           <BookOpen size={20} />
@@ -561,10 +845,13 @@ const GroupsPage: React.FC = () => {
                     return (
                       <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                         <div className="flex items-center gap-2 mb-1.5 px-2">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          <Link
+                            to={`/profile/${msg.user_id}`}
+                            className="text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:text-orange-500 transition-colors cursor-pointer"
+                          >
                             {msg.user_name}
                             {isGroupLeader && <span className="ml-1.5 text-[8px] px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded border border-orange-200">LEADER</span>}
-                          </span>
+                          </Link>
                           <span className="text-[10px] font-medium text-slate-300">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                         <div className={`max-w-[85%] px-5 py-3.5 rounded-3xl text-sm font-medium leading-relaxed shadow-sm ${
@@ -783,65 +1070,6 @@ const GroupsPage: React.FC = () => {
         </div>
       )}
 
-      {isScheduleModalOpen && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="bg-emerald-500 p-8 text-white flex justify-between items-center">
-              <div>
-                <h3 className="text-xl font-bold">Schedule Meeting</h3>
-                <p className="text-emerald-50 text-xs font-bold">A notification will be sent to all members</p>
-              </div>
-              <button onClick={() => setIsScheduleModalOpen(false)}><X size={20} /></button>
-            </div>
-            <form onSubmit={handleScheduleMeeting} className="p-8 space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Meeting Title</label>
-                <div className="relative">
-                  <BookOpen className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                  <input 
-                    required placeholder="e.g. Chapter 4 Review" 
-                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500"
-                    value={newMeeting.title}
-                    onChange={e => setNewMeeting({...newMeeting, title: e.target.value})}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Date & Time</label>
-                <div className="relative">
-                  <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                  <input 
-                    type="datetime-local" required 
-                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500"
-                    value={newMeeting.start_time}
-                    onChange={e => setNewMeeting({...newMeeting, start_time: e.target.value})}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location/Link</label>
-                <div className="relative">
-                  <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                  <input 
-                    placeholder="e.g. Library Room 2 or Zoom Link" 
-                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500"
-                    value={newMeeting.location}
-                    onChange={e => setNewMeeting({...newMeeting, location: e.target.value})}
-                  />
-                </div>
-              </div>
-              <button 
-                type="submit" 
-                disabled={scheduling}
-                className="w-full py-4 bg-emerald-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2"
-              >
-                {scheduling ? <Loader2 size={18} className="animate-spin" /> : "Broadcast to Members"}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {showLiveSession && activeGroup && (
         <LiveStudySession
           subject={activeGroup.subject}
@@ -942,12 +1170,20 @@ const GroupsPage: React.FC = () => {
                   <div className="space-y-3">
                     {groupMembers.map((member) => (
                       <div key={member.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200 hover:bg-slate-100 transition-all">
-                        <div className={`w-12 h-12 ${member.is_leader ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'} rounded-xl flex items-center justify-center font-bold text-lg`}>
+                        <Link
+                          to={`/profile/${member.id}`}
+                          className={`w-12 h-12 ${member.is_leader ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'} rounded-xl flex items-center justify-center font-bold text-lg cursor-pointer hover:scale-105 transition-transform`}
+                        >
                           {member.name[0]}
-                        </div>
+                        </Link>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <p className="font-bold text-slate-900">{member.name}</p>
+                            <Link
+                              to={`/profile/${member.id}`}
+                              className="font-bold text-slate-900 hover:text-orange-500 transition-colors cursor-pointer"
+                            >
+                              {member.name}
+                            </Link>
                             {member.is_leader && (
                               <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-bold">
                                 Leader
@@ -991,13 +1227,252 @@ const GroupsPage: React.FC = () => {
             </div>
 
             {/* Footer */}
-            <div className="p-6 bg-slate-50 border-t border-slate-100 text-center">
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
               <button
                 onClick={() => setShowMembersModal(false)}
                 className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-slate-900 transition-colors"
               >
                 Close
               </button>
+              {!isLeader && (
+                <button
+                  onClick={handleLeaveGroup}
+                  disabled={leavingGroup}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-red-600 transition-all disabled:opacity-50"
+                >
+                  {leavingGroup ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
+                  Leave Group
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Meetings Management Modal */}
+      {showMeetingsModal && activeGroup && isLeader && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[3rem] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-emerald-500 p-10 flex justify-between items-center text-white">
+              <div>
+                <h3 className="text-3xl font-black tracking-tight">Meetings</h3>
+                <p className="text-emerald-100 text-sm font-bold mt-1">{activeGroup.name}</p>
+              </div>
+              <button
+                onClick={() => { setShowMeetingsModal(false); setShowScheduleForm(false); }}
+                className="bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-all"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-8 max-h-[500px] overflow-y-auto space-y-4">
+              {/* Inline Schedule Form */}
+              {showScheduleForm && (
+                <form onSubmit={handleScheduleMeeting} className="p-5 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-3 animate-in slide-in-from-top-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs font-black text-emerald-700 uppercase tracking-widest">New Meeting</p>
+                    <button type="button" onClick={() => setShowScheduleForm(false)} className="text-emerald-400 hover:text-emerald-600"><X size={16} /></button>
+                  </div>
+                  <div className="relative">
+                    <BookOpen className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                    <input
+                      required placeholder="Meeting title"
+                      className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500"
+                      value={newMeeting.title}
+                      onChange={e => setNewMeeting({...newMeeting, title: e.target.value})}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="relative">
+                      <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                      <input
+                        type="datetime-local" required
+                        className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500"
+                        value={newMeeting.start_time}
+                        onChange={e => setNewMeeting({...newMeeting, start_time: e.target.value})}
+                      />
+                    </div>
+                    <div className="relative">
+                      <Repeat className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                      <select
+                        className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500 appearance-none"
+                        value={newMeeting.recurrence}
+                        onChange={e => setNewMeeting({...newMeeting, recurrence: e.target.value})}
+                      >
+                        <option value="none">One-time</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                    <input
+                      placeholder="Location or link (optional)"
+                      className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500"
+                      value={newMeeting.location}
+                      onChange={e => setNewMeeting({...newMeeting, location: e.target.value})}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={scheduling}
+                    className="w-full py-3 bg-emerald-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-emerald-600 transition-all flex items-center justify-center gap-2"
+                  >
+                    {scheduling ? <Loader2 size={16} className="animate-spin" /> : <><Send size={14} /> Schedule & Share to Chat</>}
+                  </button>
+                </form>
+              )}
+
+              {/* Meetings List */}
+              {loadingEvents ? (
+                <div className="flex items-center justify-center p-10">
+                  <Loader2 size={32} className="animate-spin text-emerald-500" />
+                </div>
+              ) : groupEvents.length === 0 && !showScheduleForm ? (
+                <div className="p-10 text-center space-y-3">
+                  <CalendarIcon size={40} className="mx-auto text-slate-200" />
+                  <p className="text-sm font-bold text-slate-400">No meetings scheduled yet</p>
+                  <button
+                    onClick={() => setShowScheduleForm(true)}
+                    className="text-xs font-black text-emerald-500 uppercase tracking-widest hover:text-emerald-600"
+                  >
+                    Schedule one now
+                  </button>
+                </div>
+              ) : (
+                groupEvents
+                  .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                  .map((event) => {
+                    const isPast = new Date(event.start_time) < new Date();
+                    return (
+                      <div key={event.id} className={`p-5 rounded-2xl border transition-all ${isPast ? 'bg-slate-50 border-slate-200 opacity-60' : 'bg-white border-slate-200 hover:border-emerald-200'}`}>
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <h4 className="font-bold text-slate-900 truncate">{event.title}</h4>
+                              {event.recurrence && event.recurrence !== 'none' && (
+                                <span className="flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-black uppercase shrink-0">
+                                  <Repeat size={10} />
+                                  {event.recurrence}
+                                </span>
+                              )}
+                              {isPast && (
+                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-[10px] font-black uppercase shrink-0">Past</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-4 text-sm text-slate-500">
+                              <span className="flex items-center gap-1.5">
+                                <Clock size={14} />
+                                <span className="font-bold">
+                                  {new Date(event.start_time).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} at {new Date(event.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </span>
+                              {event.location && (
+                                <span className="flex items-center gap-1.5">
+                                  <MapPin size={14} />
+                                  <span className="font-medium truncate">{event.location}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Reschedule */}
+                            <button
+                              onClick={() => { setRescheduleEvent(event); setRescheduleTime(event.start_time?.slice(0, 16) || ''); }}
+                              disabled={actionLoading === event.id}
+                              className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-all"
+                              title="Reschedule"
+                            >
+                              <CalendarIcon size={16} />
+                            </button>
+
+                            {/* Delete */}
+                            <button
+                              onClick={() => handleDeleteMeeting(event.id)}
+                              disabled={actionLoading === event.id}
+                              className="p-2 text-red-400 hover:bg-red-50 hover:text-red-500 rounded-lg transition-all"
+                              title="Delete"
+                            >
+                              {actionLoading === event.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+              <button
+                onClick={() => { setShowMeetingsModal(false); setShowScheduleForm(false); }}
+                className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-slate-900 transition-colors"
+              >
+                Close
+              </button>
+              {!showScheduleForm && (
+                <button
+                  onClick={() => setShowScheduleForm(true)}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-600 transition-all"
+                >
+                  <Plus size={14} />
+                  New Meeting
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reschedule Modal */}
+      {rescheduleEvent && (
+        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-blue-500 p-8 text-white flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-bold">Reschedule Meeting</h3>
+                <p className="text-blue-100 text-xs font-bold mt-1 truncate">{rescheduleEvent.title}</p>
+              </div>
+              <button onClick={() => setRescheduleEvent(null)}><X size={20} /></button>
+            </div>
+            <div className="p-8 space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Current Date & Time</label>
+                <p className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-500">
+                  {new Date(rescheduleEvent.start_time).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">New Date & Time</label>
+                <div className="relative">
+                  <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                  <input
+                    type="datetime-local"
+                    required
+                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                    value={rescheduleTime}
+                    onChange={e => setRescheduleTime(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setRescheduleEvent(null)}
+                  className="flex-1 py-3 border-2 border-slate-100 rounded-xl font-black text-xs uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRescheduleMeeting}
+                  disabled={!rescheduleTime || actionLoading === rescheduleEvent.id}
+                  className="flex-1 py-3 bg-blue-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {actionLoading === rescheduleEvent.id ? <Loader2 size={14} className="animate-spin" /> : 'Reschedule'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

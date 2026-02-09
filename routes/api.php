@@ -15,6 +15,11 @@ use App\Http\Controllers\API\AdminController;
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
+// Admin Notifications (public access for admin panel)
+Route::get('/admin/notifications', [AdminController::class, 'getNotifications']);
+Route::get('/admin/notifications/unread-count', [AdminController::class, 'getUnreadCount']);
+Route::post('/admin/notifications/mark-read', [AdminController::class, 'markNotificationsAsRead']);
+
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
 
@@ -52,6 +57,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/profile', [ProfileController::class, 'update']);
     Route::get('/profile/stats', [ProfileController::class, 'stats']);
 
+    // User Profiles (view other users)
+    Route::get('/users/{id}', [ProfileController::class, 'showUser']);
+    Route::get('/users/{id}/stats', [ProfileController::class, 'userStats']);
+
     // Notifications
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
@@ -77,5 +86,10 @@ Route::middleware('auth:sanctum')->group(function () {
         // Feedback Management
         Route::get('/feedback', [AdminController::class, 'getFeedback']);
         Route::delete('/feedback/{id}', [AdminController::class, 'deleteFeedback']);
+
+        // User Moderation (Warn/Ban)
+        Route::post('/users/{id}/warn', [AdminController::class, 'warnUser']);
+        Route::post('/users/{id}/ban', [AdminController::class, 'banUser']);
+        Route::post('/users/{id}/unban', [AdminController::class, 'unbanUser']);
     });
 });

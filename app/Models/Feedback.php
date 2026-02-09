@@ -8,7 +8,7 @@ class Feedback extends Model
 {
     protected $table = 'feedback';
 
-    protected $fillable = ['user_id', 'rating', 'comment'];
+    protected $fillable = ['user_id', 'group_name', 'rating', 'comment'];
 
     protected $appends = ['user_name', 'user_email'];
 

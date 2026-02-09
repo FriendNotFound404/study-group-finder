@@ -1,7 +1,7 @@
 <x-mail::message>
 # New Join Request
 
-Hello,
+Hello {{ $leaderName }},
 
 **{{ $userName }}** wants to join your study group **"{{ $groupName }}"**.
 

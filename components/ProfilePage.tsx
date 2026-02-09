@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { Edit2, Save, Book, Users, Star, Award, MapPin, Mail, Loader2, Info } from 'lucide-react';
+import { Edit2, Save, Book, Users, AlertTriangle, Award, MapPin, Mail, Loader2, Info, ShieldAlert, Ban } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { apiService } from '../services/apiService';
 
@@ -63,11 +63,15 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUserUpdate }) => {
     }
   };
 
+  const warningStatus = user.banned
+    ? { label: 'Status', value: 'BANNED', icon: <Ban className="text-red-500" />, color: 'text-red-600' }
+    : { label: 'Warnings', value: `${user.warnings || 0}/3`, icon: <AlertTriangle className="text-amber-500" />, color: (user.warnings || 0) >= 2 ? 'text-amber-600' : 'text-slate-900' };
+
   const statCards = [
-    { label: 'Groups Joined', value: stats?.groups_joined || '0', icon: <Users className="text-orange-500" /> },
-    { label: 'Study Sessions', value: stats?.study_hours || '0', icon: <Book className="text-blue-500" /> },
-    { label: 'Avg Rating', value: '5.0', icon: <Star className="text-yellow-500" /> },
-    { label: 'Karma Points', value: stats?.karma || '0', icon: <Award className="text-emerald-500" /> },
+    { label: 'Groups Joined', value: stats?.groups_joined || '0', icon: <Users className="text-orange-500" />, color: 'text-slate-900' },
+    { label: 'Study Sessions', value: stats?.study_hours || '0', icon: <Book className="text-blue-500" />, color: 'text-slate-900' },
+    warningStatus,
+    { label: 'Karma Points', value: stats?.karma || '0', icon: <Award className="text-emerald-500" />, color: 'text-slate-900' },
   ];
 
   const activityData = stats?.activity?.map((val: number, i: number) => ({
@@ -87,21 +91,21 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUserUpdate }) => {
     <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
       <div className="relative">
         <div className="h-48 w-full bg-gradient-to-r from-orange-400 to-orange-600 rounded-[3rem] shadow-xl shadow-orange-100"></div>
-        <div className="absolute -bottom-12 left-12 flex flex-col md:flex-row items-end gap-6 w-[calc(100%-6rem)]">
+        <div className="absolute top-8 left-12 flex flex-col md:flex-row items-start gap-6 w-[calc(100%-6rem)]">
           <div className="w-32 h-32 bg-white rounded-[2.5rem] p-2 shadow-2xl shrink-0">
             <div className="w-full h-full bg-orange-100 rounded-[2rem] flex items-center justify-center text-orange-600 text-4xl font-black border border-orange-200">
               {user.avatar || user.name[0]}
             </div>
           </div>
-          <div className="mb-2 space-y-1 flex-1 min-w-0">
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight truncate">{user.name}</h1>
-            <div className="flex flex-wrap items-center gap-4 text-slate-500 font-bold text-sm">
-              <div className="flex items-center gap-1.5"><MapPin size={14} className="text-orange-500" /> {profile.location || 'Location not set'}</div>
-              <div className="flex items-center gap-1.5"><Mail size={14} className="text-orange-500" /> {user.email}</div>
+          <div className="mt-12 space-y-1 flex-1 min-w-0">
+            <h1 className="text-3xl font-black text-white tracking-tight truncate">{user.name}</h1>
+            <div className="flex flex-wrap items-center gap-4 text-white font-bold text-sm">
+              <div className="flex items-center gap-1.5"><MapPin size={14} className="text-white" /> {profile.location || 'Location not set'}</div>
+              <div className="flex items-center gap-1.5"><Mail size={14} className="text-white" /> {user.email}</div>
             </div>
           </div>
         </div>
-        <div className="absolute -bottom-12 right-12 hidden md:block">
+        <div className="absolute top-20 right-12 hidden md:block">
           {!isEditing ? (
             <button 
               onClick={() => setIsEditing(true)}
@@ -227,11 +231,11 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUserUpdate }) => {
 
           <div className="grid grid-cols-2 gap-4">
             {statCards.map((stat, idx) => (
-              <div key={idx} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm text-center group hover:border-orange-200 transition-all">
+              <div key={idx} className={`bg-white p-6 rounded-3xl border border-slate-200 shadow-sm text-center group hover:border-orange-200 transition-all ${stat.label === 'Status' && user.banned ? 'border-red-200 bg-red-50' : ''}`}>
                 <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:bg-white transition-colors">
                   {stat.icon}
                 </div>
-                <h4 className="text-2xl font-black text-slate-900">{stat.value}</h4>
+                <h4 className={`text-2xl font-black ${stat.color || 'text-slate-900'}`}>{stat.value}</h4>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{stat.label}</p>
               </div>
             ))}

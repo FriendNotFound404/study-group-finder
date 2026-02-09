@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Users, MapPin, Sparkles, Loader2, X, AlertCircle, Search, Eraser, Filter, ChevronDown, Lock, Archive, Unlock, TrendingUp, BookOpen, Trophy, Flame, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Users, MapPin, Sparkles, Loader2, X, AlertCircle, Search, Eraser, Filter, ChevronDown, Lock, Archive, Unlock, TrendingUp, BookOpen, Trophy, Flame, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { StudyGroup, User, GroupStatus } from '../types';
 import { geminiService } from '../services/geminiService';
@@ -14,6 +14,7 @@ const HomePage: React.FC = () => {
   const [trendingGroups, setTrendingGroups] = useState<StudyGroup[]>([]);
   const [discoverSubjects, setDiscoverSubjects] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [searchedUsers, setSearchedUsers] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +26,7 @@ const HomePage: React.FC = () => {
   const [subjectFilter, setSubjectFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [contentFilter, setContentFilter] = useState<'all' | 'groups' | 'users'>('all');
 
   const [searchParams, setSearchParams] = useSearchParams();
   const searchQuery = searchParams.get('q') || '';
@@ -43,6 +45,18 @@ const HomePage: React.FC = () => {
     faculty: ''
   });
 
+  // Edit group state
+  const [editingGroup, setEditingGroup] = useState<StudyGroup | null>(null);
+  const [editGroupData, setEditGroupData] = useState({
+    name: '',
+    subject: '',
+    description: '',
+    max_members: 5,
+    location: '',
+    faculty: ''
+  });
+  const [editSaving, setEditSaving] = useState(false);
+
   // Scroll refs for horizontal sections
   const joinedScrollRef = useRef<HTMLDivElement>(null);
   const createdScrollRef = useRef<HTMLDivElement>(null);
@@ -50,6 +64,24 @@ const HomePage: React.FC = () => {
   useEffect(() => {
     loadAllData();
   }, []);
+
+  useEffect(() => {
+    // Fetch users when there's a search query
+    const fetchUsers = async () => {
+      if (searchQuery) {
+        try {
+          const users = await apiService.searchUsers(searchQuery);
+          setSearchedUsers(users);
+        } catch (err) {
+          console.error('Failed to search users:', err);
+          setSearchedUsers([]);
+        }
+      } else {
+        setSearchedUsers([]);
+      }
+    };
+    fetchUsers();
+  }, [searchQuery]);
 
   const loadAllData = async () => {
     setLoading(true);
@@ -184,6 +216,34 @@ const HomePage: React.FC = () => {
     setSubjectFilter('');
     setLocationFilter('');
     setStatusFilter('');
+    setContentFilter('all');
+  };
+
+  const openEditModal = (group: StudyGroup) => {
+    setEditingGroup(group);
+    setEditGroupData({
+      name: group.name,
+      subject: group.subject,
+      description: group.description,
+      max_members: group.max_members,
+      location: group.location,
+      faculty: group.faculty
+    });
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGroup) return;
+    setEditSaving(true);
+    try {
+      await apiService.updateGroup(editingGroup.id, editGroupData);
+      setEditingGroup(null);
+      loadAllData();
+    } catch (err: any) {
+      alert("Failed to update group: " + err.message);
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const scroll = (ref: React.RefObject<HTMLDivElement>, direction: 'left' | 'right') => {
@@ -196,7 +256,14 @@ const HomePage: React.FC = () => {
     }
   };
 
-  const activeFilterCount = [facultyFilter, subjectFilter, locationFilter, statusFilter, searchQuery].filter(Boolean).length;
+  const activeFilterCount = [
+    facultyFilter,
+    subjectFilter,
+    locationFilter,
+    statusFilter,
+    searchQuery,
+    contentFilter !== 'all' ? 'content' : ''
+  ].filter(Boolean).length;
 
   // Render horizontal group card (for joined/created sections)
   const renderCompactGroupCard = (group: StudyGroup) => {
@@ -208,9 +275,12 @@ const HomePage: React.FC = () => {
         className="flex-shrink-0 w-80 bg-white border border-slate-200 rounded-2xl p-6 hover:shadow-lg hover:border-orange-200 transition-all"
       >
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-sm border border-orange-200">
+          <Link
+            to={`/profile/${group.creator_id}`}
+            className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-sm border border-orange-200 cursor-pointer hover:scale-105 transition-transform"
+          >
             {group.creator_name[0]}
-          </div>
+          </Link>
           <div className="flex-1 min-w-0">
             <Link to={`/groups?group=${group.id}`} className="block group/title">
               <h3 className="font-bold text-slate-900 truncate group-hover/title:text-orange-500 transition-colors">{group.name}</h3>
@@ -230,6 +300,17 @@ const HomePage: React.FC = () => {
             {group.location}
           </span>
         </div>
+
+        {/* Edit Button - Only show for creator */}
+        {isCreator && (
+          <button
+            onClick={() => openEditModal(group)}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all bg-orange-50 border-2 border-orange-200 text-orange-600 hover:bg-orange-100"
+          >
+            <Pencil size={14} />
+            Edit Group
+          </button>
+        )}
 
         {/* Leave Button - Only show if not the creator */}
         {!isCreator && (
@@ -256,112 +337,14 @@ const HomePage: React.FC = () => {
               : "Your complete study companion"}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold transition-all border ${
-              activeFilterCount > 0 || showFilters
-                ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm'
-                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <Filter size={18} />
-            <span>Filters</span>
-            {activeFilterCount > 0 && (
-              <span className="ml-1 w-5 h-5 bg-orange-500 text-white rounded-full flex items-center justify-center text-[10px] font-black">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-orange-200 transition-all hover:-translate-y-0.5"
-          >
-            <Plus size={20} />
-            <span>Create Group</span>
-          </button>
-        </div>
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-orange-200 transition-all hover:-translate-y-0.5"
+        >
+          <Plus size={20} />
+          <span>Create Group</span>
+        </button>
       </div>
-
-      {/* Filters Panel */}
-      {showFilters && (
-        <div className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-xl shadow-slate-200/50 space-y-6 animate-in slide-in-from-top-4 duration-300">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Faculty</label>
-              <div className="relative">
-                <select
-                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                  value={facultyFilter}
-                  onChange={e => setFacultyFilter(e.target.value)}
-                >
-                  <option value="">All Faculties</option>
-                  {faculties.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Subject</label>
-              <div className="relative">
-                <select
-                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                  value={subjectFilter}
-                  onChange={e => setSubjectFilter(e.target.value)}
-                >
-                  <option value="">All Subjects</option>
-                  {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
-              <div className="relative">
-                <select
-                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                  value={locationFilter}
-                  onChange={e => setLocationFilter(e.target.value)}
-                >
-                  <option value="">Any Location</option>
-                  {locations.map(l => <option key={l} value={l}>{l}</option>)}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Status</label>
-              <div className="relative">
-                <select
-                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                  value={statusFilter}
-                  onChange={e => setStatusFilter(e.target.value)}
-                >
-                  <option value="">All Statuses</option>
-                  <option value={GroupStatus.OPEN}>Open</option>
-                  <option value={GroupStatus.CLOSED}>Closed</option>
-                  <option value={GroupStatus.ARCHIVED}>Archived</option>
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              onClick={clearAllFilters}
-              className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-orange-500 transition-colors flex items-center gap-1.5"
-            >
-              <Eraser size={14} />
-              Reset All Filters
-            </button>
-          </div>
-        </div>
-      )}
 
       {error && (
         <div className="bg-amber-50 border border-amber-200 p-6 rounded-[2rem] flex items-start gap-4 text-amber-800">
@@ -574,24 +557,181 @@ const HomePage: React.FC = () => {
             </div>
           )}
 
-          {/* All Groups Section */}
+          {/* All Groups & Users Section */}
           <div className="space-y-4" data-section="all-groups">
-            <div className="flex items-center gap-3">
-              <TrendingUp className="text-orange-500" size={24} />
-              <div>
-                <h2 className="text-xl font-bold text-slate-900">
-                  All Study Groups
-                  {subjectFilter && (
-                    <span className="ml-2 text-sm font-normal text-orange-500">
-                      (Filtered by: {subjectFilter})
-                    </span>
-                  )}
-                </h2>
-                <p className="text-sm text-slate-500">Browse all available study sessions</p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <TrendingUp className="text-orange-500" size={24} />
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">
+                    All Study Groups
+                    {subjectFilter && (
+                      <span className="ml-2 text-sm font-normal text-orange-500">
+                        (Filtered by: {subjectFilter})
+                      </span>
+                    )}
+                  </h2>
+                  <p className="text-sm text-slate-500">Browse all available study sessions</p>
+                </div>
               </div>
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold transition-all border ${
+                  activeFilterCount > 0 || showFilters
+                    ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Filter size={18} />
+                <span>Filters</span>
+                {activeFilterCount > 0 && (
+                  <span className="ml-1 w-5 h-5 bg-orange-500 text-white rounded-full flex items-center justify-center text-[10px] font-black">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
             </div>
-            <div className="grid gap-6">
-              {filteredGroups.length === 0 && !error && (
+
+            {/* Filters Panel */}
+            {showFilters && (
+              <div className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-xl shadow-slate-200/50 space-y-6 animate-in slide-in-from-top-4 duration-300">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Content Type</label>
+                    <div className="relative">
+                      <select
+                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                        value={contentFilter}
+                        onChange={e => setContentFilter(e.target.value as 'all' | 'groups' | 'users')}
+                      >
+                        <option value="all">All</option>
+                        <option value="groups">Groups Only</option>
+                        <option value="users">Users Only</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Faculty</label>
+                    <div className="relative">
+                      <select
+                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                        value={facultyFilter}
+                        onChange={e => setFacultyFilter(e.target.value)}
+                      >
+                        <option value="">All Faculties</option>
+                        {faculties.map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Subject</label>
+                    <div className="relative">
+                      <select
+                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                        value={subjectFilter}
+                        onChange={e => setSubjectFilter(e.target.value)}
+                      >
+                        <option value="">All Subjects</option>
+                        {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
+                    <div className="relative">
+                      <select
+                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                        value={locationFilter}
+                        onChange={e => setLocationFilter(e.target.value)}
+                      >
+                        <option value="">Any Location</option>
+                        {locations.map(l => <option key={l} value={l}>{l}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Status</label>
+                    <div className="relative">
+                      <select
+                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                        value={statusFilter}
+                        onChange={e => setStatusFilter(e.target.value)}
+                      >
+                        <option value="">All Statuses</option>
+                        <option value={GroupStatus.OPEN}>Open</option>
+                        <option value={GroupStatus.CLOSED}>Closed</option>
+                        <option value={GroupStatus.ARCHIVED}>Archived</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={clearAllFilters}
+                    className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-orange-500 transition-colors flex items-center gap-1.5"
+                  >
+                    <Eraser size={14} />
+                    Reset All Filters
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* User Results Section */}
+            {searchQuery && searchedUsers.length > 0 && (contentFilter === 'all' || contentFilter === 'users') && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <Users className="text-orange-500" size={24} />
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Users ({searchedUsers.length})</h3>
+                    <p className="text-sm text-slate-500">Found users matching "{searchQuery}"</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {searchedUsers.map(user => (
+                    <Link
+                      key={user.id}
+                      to={`/profile/${user.id}`}
+                      className="bg-white border border-slate-200 rounded-2xl p-6 hover:shadow-lg hover:border-orange-200 transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-4 mb-4">
+                        <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center font-black text-xl border border-orange-200/50 group-hover:scale-105 transition-transform">
+                          {user.avatar || user.name[0]}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold text-slate-900 truncate group-hover:text-orange-500 transition-colors">{user.name}</h4>
+                          <p className="text-xs font-semibold text-slate-400">{user.major || 'Student'}</p>
+                        </div>
+                      </div>
+                      {user.bio && (
+                        <p className="text-sm text-slate-500 line-clamp-2 mb-3">{user.bio}</p>
+                      )}
+                      <div className="flex items-center gap-4 text-xs text-slate-400 font-semibold">
+                        <span className="flex items-center gap-1">
+                          <MapPin size={12} />
+                          {user.location || 'Location not set'}
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Groups Results */}
+            {(contentFilter === 'all' || contentFilter === 'groups') && (
+              <div className="grid gap-6">
+                {filteredGroups.length === 0 && !error && (
                 <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] p-16 text-center">
                   {activeFilterCount > 0 ? (
                     <>
@@ -615,7 +755,7 @@ const HomePage: React.FC = () => {
                 </div>
               )}
 
-              {filteredGroups.map(group => {
+                {filteredGroups.map(group => {
                 const isFull = group.members_count >= group.max_members;
                 const isClosed = group.status === GroupStatus.CLOSED;
                 const isArchived = group.status === GroupStatus.ARCHIVED;
@@ -625,12 +765,20 @@ const HomePage: React.FC = () => {
                   <div key={group.id} className={`bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm hover:shadow-xl hover:shadow-slate-100 transition-all group relative overflow-hidden ${isArchived ? 'opacity-75 grayscale-[0.5]' : ''}`}>
                     <div className="flex justify-between items-start mb-6">
                       <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center font-black text-xl border border-orange-200/50">
+                        <Link
+                          to={`/profile/${group.creator_id}`}
+                          className="w-14 h-14 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center font-black text-xl border border-orange-200/50 cursor-pointer hover:scale-105 transition-transform"
+                        >
                           {group.creator_name ? group.creator_name[0] : 'U'}
-                        </div>
+                        </Link>
                         <div>
                           <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-slate-900 text-lg leading-tight">{group.creator_name}</h3>
+                            <Link
+                              to={`/profile/${group.creator_id}`}
+                              className="font-bold text-slate-900 text-lg leading-tight hover:text-orange-500 transition-colors cursor-pointer"
+                            >
+                              {group.creator_name}
+                            </Link>
                             {getStatusBadge(group.status)}
                           </div>
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">{new Date(group.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
@@ -695,8 +843,9 @@ const HomePage: React.FC = () => {
                     </div>
                   </div>
                 );
-              })}
-            </div>
+                })}
+              </div>
+            )}
           </div>
 
           {/* Leaders Leaderboard Section */}
@@ -730,10 +879,18 @@ const HomePage: React.FC = () => {
                         </td>
                         <td className="px-8 py-6">
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center font-bold text-orange-600 border border-orange-100">
+                            <Link
+                              to={`/profile/${user.id}`}
+                              className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center font-bold text-orange-600 border border-orange-100 cursor-pointer hover:scale-105 transition-transform"
+                            >
                               {user.name[0]}
-                            </div>
-                            <span className="font-bold text-slate-900">{user.name}</span>
+                            </Link>
+                            <Link
+                              to={`/profile/${user.id}`}
+                              className="font-bold text-slate-900 hover:text-orange-500 transition-colors cursor-pointer"
+                            >
+                              {user.name}
+                            </Link>
                           </div>
                         </td>
                         <td className="px-8 py-6">
@@ -863,6 +1020,106 @@ const HomePage: React.FC = () => {
                   className="flex-1 px-8 py-4 bg-orange-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-orange-600 shadow-xl shadow-orange-100 transition-all active:scale-95"
                 >
                   Create Group
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Group Modal */}
+      {editingGroup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-slate-800 p-10 flex justify-between items-center text-white">
+              <div>
+                <h3 className="text-3xl font-black tracking-tight">Edit Group</h3>
+                <p className="text-slate-300 text-sm font-bold mt-1">Modify your study group details</p>
+              </div>
+              <button onClick={() => setEditingGroup(null)} className="bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-all">
+                <X size={24} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="p-10 space-y-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Group Name</label>
+                <input
+                  required
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none text-sm font-bold"
+                  value={editGroupData.name}
+                  onChange={e => setEditGroupData({...editGroupData, name: e.target.value})}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Subject Area</label>
+                  <input
+                    required
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none text-sm font-bold"
+                    value={editGroupData.subject}
+                    onChange={e => setEditGroupData({...editGroupData, subject: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Faculty</label>
+                  <input
+                    required
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none text-sm font-bold"
+                    value={editGroupData.faculty}
+                    onChange={e => setEditGroupData({...editGroupData, faculty: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Description</label>
+                <textarea
+                  required
+                  rows={3}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none text-sm font-bold resize-none"
+                  value={editGroupData.description}
+                  onChange={e => setEditGroupData({...editGroupData, description: e.target.value})}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Max Students</label>
+                  <input
+                    type="number"
+                    min={2}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none text-sm font-bold"
+                    value={editGroupData.max_members}
+                    onChange={e => setEditGroupData({...editGroupData, max_members: parseInt(e.target.value)})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
+                  <input
+                    required
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none text-sm font-bold"
+                    value={editGroupData.location}
+                    onChange={e => setEditGroupData({...editGroupData, location: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 flex gap-4">
+                <button
+                  type="button"
+                  onClick={() => setEditingGroup(null)}
+                  className="flex-1 px-8 py-4 border-2 border-slate-100 rounded-2xl font-black text-xs uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSaving}
+                  className="flex-1 px-8 py-4 bg-orange-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-orange-600 shadow-xl shadow-orange-100 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {editSaving ? <><Loader2 size={16} className="animate-spin" /> Saving...</> : 'Save Changes'}
                 </button>
               </div>
             </form>

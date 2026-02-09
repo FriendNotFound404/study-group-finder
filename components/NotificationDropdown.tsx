@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { AppNotification } from '../types';
-import { MessageSquare, UserPlus, Calendar, Clock, Check, X, Loader2, XCircle, UserX } from 'lucide-react';
+import { MessageSquare, UserPlus, Calendar, Clock, Check, X, Loader2, XCircle, UserX, AlertTriangle, Shield, Ban } from 'lucide-react';
 import { apiService } from '../services/apiService';
 
 interface NotificationDropdownProps {
@@ -63,6 +63,9 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notificatio
       case 'join_approved': return <Check size={16} className="text-emerald-500" />;
       case 'join_rejected': return <X size={16} className="text-red-500" />;
       case 'removed_from_group': return <UserX size={16} className="text-red-600" />;
+      case 'report_submitted': return <Shield size={16} className="text-red-500" />;
+      case 'user_warned': return <AlertTriangle size={16} className="text-amber-500" />;
+      case 'user_banned': return <Ban size={16} className="text-red-600" />;
       default: return <Clock size={16} className="text-slate-400" />;
     }
   };
@@ -142,22 +145,38 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notificatio
             <p className="text-[10px] font-black uppercase tracking-widest">Clear for now</p>
           </div>
         ) : (
-          notifications.map((n) => (
-            <div
-              key={n.id}
-              onClick={() => onNotificationClick?.(n)}
-              className={`p-5 border-b border-slate-50 flex gap-4 hover:bg-slate-50 transition-colors cursor-pointer ${!n.read_at ? 'bg-orange-50/30' : ''}`}
-            >
-              <div className="mt-1 shrink-0 w-8 h-8 rounded-xl bg-white border border-slate-100 flex items-center justify-center shadow-sm">
-                {getIcon(n.type)}
-              </div>
-              <div className="space-y-1 flex-1">
-                <p className="text-xs font-bold text-slate-800 leading-tight">
-                  {n.data.message}
-                </p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                  {getTimeAgo(n.created_at)}
-                </p>
+          notifications.map((n) => {
+            const isWarning = n.type === 'user_warned';
+            const isBan = n.type === 'user_banned';
+            const isReport = n.type === 'report_submitted';
+            const bgColor = isBan
+              ? 'bg-red-50/50 border-l-4 border-l-red-500'
+              : isWarning
+              ? 'bg-amber-50/50 border-l-4 border-l-amber-500'
+              : isReport
+              ? 'bg-red-50/30 border-l-4 border-l-red-400'
+              : !n.read_at
+              ? 'bg-orange-50/30'
+              : '';
+
+            return (
+              <div
+                key={n.id}
+                onClick={() => onNotificationClick?.(n)}
+                className={`p-5 border-b border-slate-50 flex gap-4 hover:bg-slate-50 transition-colors cursor-pointer ${bgColor}`}
+              >
+                <div className="mt-1 shrink-0 w-8 h-8 rounded-xl bg-white border border-slate-100 flex items-center justify-center shadow-sm">
+                  {getIcon(n.type)}
+                </div>
+                <div className="space-y-1 flex-1">
+                  <p className={`text-xs font-bold leading-tight ${isBan ? 'text-red-700' : isWarning ? 'text-amber-700' : 'text-slate-800'}`}>
+                    {n.data.message}
+                  </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    {getTimeAgo(n.created_at)}
+                  </p>
+                </div>
                 {n.type === 'join_request' && (
                   processedNotifications[n.id] ? (
                     <div className={`mt-2 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-center ${
@@ -198,7 +217,8 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notificatio
                 )}
               </div>
             </div>
-          ))
+          );
+          })
         )}
       </div>
       

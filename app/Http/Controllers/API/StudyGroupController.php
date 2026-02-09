@@ -9,11 +9,10 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
-use App\Mail\JoinRequestNotification;
-use App\Mail\JoinApprovedNotification;
-use App\Mail\JoinRejectedNotification;
-use App\Mail\GroupJoinNotification;
-use App\Mail\MemberRemovedNotification;
+use App\Mail\JoinRequestMail;
+use App\Mail\JoinApprovedMail;
+use App\Mail\JoinRejectedMail;
+use App\Mail\RemovedFromGroupMail;
 
 class StudyGroupController extends Controller
 {
@@ -141,10 +140,15 @@ class StudyGroupController extends Controller
                     ]
                 ]);
 
-                // Send email notification
+                // Send email notification if leader's email is verified
                 $leader = User::find($group->creator_id);
-                if ($leader && $leader->email) {
-                    Mail::to($leader->email)->send(new GroupJoinNotification($user->name, $group->name, $group->id));
+                if ($leader && $leader->email_verified_at) {
+                    try {
+                        // Note: For group_join, we're not sending email to avoid spam
+                        // Only join requests, approvals, and removals get emails
+                    } catch (\Exception $e) {
+                        \Log::error('Failed to send group join email: ' . $e->getMessage());
+                    }
                 }
             }
 
@@ -187,10 +191,14 @@ class StudyGroupController extends Controller
                     ]
                 ]);
 
-                // Send email notification
+                // Send email notification if leader's email is verified
                 $leader = User::find($group->creator_id);
-                if ($leader && $leader->email) {
-                    Mail::to($leader->email)->send(new JoinRequestNotification($user->name, $group->name, $group->id));
+                if ($leader && $leader->email_verified_at) {
+                    try {
+                        Mail::to($leader->email)->send(new JoinRequestMail($leader->name, $user->name, $group->name));
+                    } catch (\Exception $e) {
+                        \Log::error('Failed to send join request email: ' . $e->getMessage());
+                    }
                 }
             }
 
@@ -318,9 +326,13 @@ class StudyGroupController extends Controller
                 ]
             ]);
 
-            // Send email notification
-            if ($requestingUser->email) {
-                Mail::to($requestingUser->email)->send(new JoinApprovedNotification($group->name, $group->id));
+            // Send email notification if user's email is verified
+            if ($requestingUser->email_verified_at) {
+                try {
+                    Mail::to($requestingUser->email)->send(new JoinApprovedMail($requestingUser->name, $group->name));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send join approved email: ' . $e->getMessage());
+                }
             }
         }
 
@@ -368,9 +380,13 @@ class StudyGroupController extends Controller
                 ]
             ]);
 
-            // Send email notification
-            if ($requestingUser->email) {
-                Mail::to($requestingUser->email)->send(new JoinRejectedNotification($group->name, $group->id));
+            // Send email notification if user's email is verified
+            if ($requestingUser->email_verified_at) {
+                try {
+                    Mail::to($requestingUser->email)->send(new JoinRejectedMail($requestingUser->name, $group->name));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send join rejected email: ' . $e->getMessage());
+                }
             }
         }
 
@@ -417,9 +433,13 @@ class StudyGroupController extends Controller
                 ]
             ]);
 
-            // Send email notification
-            if ($removedUser->email) {
-                Mail::to($removedUser->email)->send(new MemberRemovedNotification($group->name, $group->id));
+            // Send email notification if user's email is verified
+            if ($removedUser->email_verified_at) {
+                try {
+                    Mail::to($removedUser->email)->send(new RemovedFromGroupMail($removedUser->name, $group->name));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send removed from group email: ' . $e->getMessage());
+                }
             }
         }
 

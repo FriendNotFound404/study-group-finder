@@ -29,11 +29,6 @@ const SettingsPage: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div>
-        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Settings</h1>
-        <p className="text-slate-500 font-medium">Manage your experience and data</p>
-      </div>
-
       <div className="space-y-8">
         {settingsGroups.map((group, idx) => (
           <div key={idx} className="space-y-4">

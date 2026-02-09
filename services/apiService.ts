@@ -5,8 +5,9 @@ import { API_CONFIG } from '../constants';
 const BASE_URL = API_CONFIG.BASE_URL;
 
 const getHeaders = () => {
-  const userStr = localStorage.getItem('auth_user');
   let token = '';
+  // Check main site auth first, then admin auth as fallback
+  const userStr = localStorage.getItem('auth_user') || localStorage.getItem('admin_auth');
   if (userStr) {
     try {
       const user = JSON.parse(userStr);
@@ -15,7 +16,7 @@ const getHeaders = () => {
       console.error("Auth token parse error", e);
     }
   }
-  
+
   return {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -140,7 +141,7 @@ export const apiService = {
     if (content) formData.append('content', content);
     if (file) formData.append('file', file);
 
-    const userStr = localStorage.getItem('auth_user');
+    const userStr = localStorage.getItem('auth_user') || localStorage.getItem('admin_auth');
     let token = '';
     if (userStr) {
       try {
@@ -183,7 +184,8 @@ export const apiService = {
     return handleResponse(res);
   },
 
-  // Feedback
+  // Reports (uses feedback endpoints for backend compatibility)
+  // Note: These endpoints are now used for user reporting system
   async getFeedback(): Promise<Feedback[]> {
     const res = await fetch(`${BASE_URL}/feedback`, { headers: getHeaders() });
     return handleResponse(res);
@@ -224,6 +226,16 @@ export const apiService = {
   // Profile
   async getProfile(): Promise<User> {
     const res = await fetch(`${BASE_URL}/profile`, { headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  async getUserById(userId: number): Promise<User> {
+    const res = await fetch(`${BASE_URL}/users/${userId}`, { headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  async getUserStats(userId: number): Promise<any> {
+    const res = await fetch(`${BASE_URL}/users/${userId}/stats`, { headers: getHeaders() });
     return handleResponse(res);
   },
 

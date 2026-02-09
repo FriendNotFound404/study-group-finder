@@ -24,9 +24,11 @@ const AdminLogin: React.FC = () => {
         return;
       }
 
-      // Store admin auth
-      localStorage.setItem('admin_user', JSON.stringify(response.user));
-      localStorage.setItem('auth_user', JSON.stringify({ ...response.user, token: response.token }));
+      // Store admin auth separately (don't overwrite main site's auth_user)
+      localStorage.setItem('admin_auth', JSON.stringify({ ...response.user, token: response.token }));
+
+      // Notify App to re-render for admin route guards
+      window.dispatchEvent(new Event('admin_auth_change'));
 
       navigate('/admin/dashboard');
     } catch (err: any) {

@@ -48,6 +48,13 @@ class AuthController extends Controller
             ]);
         }
 
+        // Check if user is banned
+        if ($user->banned) {
+            return response()->json([
+                'message' => 'Your account has been banned. Please contact support for assistance.'
+            ], 403);
+        }
+
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([

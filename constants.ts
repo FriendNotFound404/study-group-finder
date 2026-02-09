@@ -5,7 +5,7 @@
  */
 export const API_CONFIG = {
   BASE_URL: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://127.0.0.1:8000/api'
+    ? 'http://127.0.0.1:8001/api'
     : 'https://api.your-campus-hub.com/api', // Replace with your actual production domain
   TIMEOUT: 10000,
 };

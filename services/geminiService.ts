@@ -1,16 +1,32 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-import { GoogleGenAI } from "@google/genai";
+const apiKey = import.meta.env.VITE_API_KEY;
+console.log("[Gemini] API Key:", apiKey ? 'SET' : 'MISSING');
+
+const genAI = new GoogleGenerativeAI(apiKey);
+const model = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash-lite"
+});
+
+// Diagnostic function
+export async function listAvailableModels() {
+  try {
+    const models = await genAI.listModels();
+    console.log("[Gemini] Available models:", models);
+    return models;
+  } catch (error) {
+    console.error("[Gemini] Error listing models:", error);
+    return null;
+  }
+}
 
 export const geminiService = {
   async generateGroupDescription(subject: string, goal: string) {
-    // Fix: Create a new GoogleGenAI instance right before making an API call to ensure it uses the current process.env.API_KEY
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
-        contents: `Act as a helpful study group organizer. Create an engaging, professional study group description for a group focused on "${subject}". The primary goal is: "${goal}". Keep it concise and welcoming for university students.`,
-      });
-      return response.text;
+      const result = await model.generateContent(
+        `Act as a helpful study group organizer. Create an engaging, professional study group description for a group focused on "${subject}". The primary goal is: "${goal}". Keep it concise and welcoming for university students.`
+      );
+      return result.response.text();
     } catch (error) {
       console.error("Gemini Error:", error);
       return "Unable to generate description. Please try writing one manually.";
@@ -18,34 +34,25 @@ export const geminiService = {
   },
 
   async summarizeChat(messages: string[]) {
-    // Fix: Create a new GoogleGenAI instance right before making an API call to ensure it uses the current process.env.API_KEY
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-      const chatContext = messages.join("\n");
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
-        contents: `Summarize the following study group chat messages into key takeaways and action items for the members:\n\n${chatContext}`,
-      });
-      return response.text;
-    } catch (error) {
-      console.error("Gemini Error:", error);
+      const result = await model.generateContent(
+        `Summarize the following study group chat messages into key takeaways and action items:\n\n${messages.join("\n")}`
+      );
+      return result.response.text();
+    } catch {
       return "Summary unavailable at this time.";
     }
   },
 
   async suggestStudyPlan(subject: string) {
-    // Fix: Create a new GoogleGenAI instance right before making an API call to ensure it uses the current process.env.API_KEY
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
-      // Use gemini-1.5-pro for complex reasoning tasks like curriculum planning
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-pro',
-        contents: `Create a highly structured 4-week study plan for university students studying "${subject}". Focus on breaking down complex topics into manageable weekly goals. Use bullet points and clear headings.`,
-      });
-      return response.text;
-    } catch (error) {
-      console.error("Gemini Error:", error);
+      const result = await model.generateContent(
+        `Create a structured 4-week university study plan for "${subject}" with bullet points and headings.`
+      );
+      return result.response.text();
+    } catch {
       return "Study plan generation failed.";
     }
-  }
+  },
 };
+

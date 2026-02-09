@@ -40,13 +40,13 @@ const AdminDashboard: React.FC = () => {
         setRefreshing(true);
       }
 
-      const userStr = localStorage.getItem('auth_user');
+      const userStr = localStorage.getItem('admin_auth');
       if (!userStr) return;
 
       const user = JSON.parse(userStr);
       const token = user.token;
 
-      const response = await fetch('http://localhost:8000/api/admin/dashboard', {
+      const response = await fetch('http://localhost:8001/api/admin/dashboard', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',

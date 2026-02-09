@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, UsersIcon, MessageSquare, Star, BarChart3, Settings, LogOut, Shield, Menu, X } from 'lucide-react';
-import { useState } from 'react';
+import { LayoutDashboard, Users, UsersIcon, MessageSquare, AlertTriangle, BarChart3, Settings, LogOut, Shield, Menu, X, Bell } from 'lucide-react';
+import NotificationDropdown from '../NotificationDropdown';
+import { AppNotification } from '../../types';
+import { apiService } from '../../services/apiService';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -11,10 +13,73 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isNotifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Get admin user info from localStorage
+    const adminAuth = localStorage.getItem('admin_auth');
+    if (adminAuth) {
+      fetchNotifications();
+      const interval = setInterval(fetchNotifications, 30000); // Poll every 30s
+      return () => clearInterval(interval);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const fetchNotifications = async () => {
+    try {
+      // Use admin-specific notification endpoints
+      const [listResponse, countResponse] = await Promise.all([
+        fetch('http://localhost:8001/api/admin/notifications'),
+        fetch('http://localhost:8001/api/admin/notifications/unread-count')
+      ]);
+
+      const list = await listResponse.json();
+      const countData = await countResponse.json();
+
+      setNotifications(prev => {
+        const newIds = new Set(list.map((n: AppNotification) => n.id));
+        const existingRead = prev.filter(n => n.read_at && !newIds.has(n.id));
+        return [...list, ...existingRead].sort((a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+      });
+      setUnreadCount(countData.count);
+    } catch (err) {
+      console.error("Failed to fetch notifications", err);
+    }
+  };
+
+  const markAllRead = async () => {
+    try {
+      // Use admin-specific mark-read endpoint
+      await fetch('http://localhost:8001/api/admin/notifications/mark-read', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      setUnreadCount(0);
+      setNotifications(prev => prev.map(n => ({ ...n, read_at: new Date().toISOString() })));
+    } catch (err) {
+      console.error("Failed to mark as read", err);
+    }
+  };
 
   const handleLogout = () => {
-    localStorage.removeItem('admin_user');
-    localStorage.removeItem('auth_user');
+    localStorage.removeItem('admin_auth');
     navigate('/admin/login');
   };
 
@@ -22,7 +87,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { path: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/admin/users', icon: Users, label: 'User Management' },
     { path: '/admin/groups', icon: UsersIcon, label: 'Group Management' },
-    { path: '/admin/feedback', icon: Star, label: 'Feedback' },
+    { path: '/admin/reports', icon: AlertTriangle, label: 'User Reports' },
     { path: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
   ];
 
@@ -112,7 +177,29 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={() => setNotifOpen(!isNotifOpen)}
+                className={`p-2 hover:bg-slate-100 rounded-xl relative transition-all ${isNotifOpen ? 'bg-slate-50 text-slate-900' : 'text-slate-400'}`}
+              >
+                <Bell size={22} />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-purple-500 border-2 border-white rounded-full flex items-center justify-center text-[8px] font-black text-white">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+              {isNotifOpen && (
+                <NotificationDropdown
+                  notifications={notifications}
+                  onMarkRead={markAllRead}
+                  onClose={() => setNotifOpen(false)}
+                  onRefresh={fetchNotifications}
+                />
+              )}
+            </div>
+            <div className="h-10 w-[1px] bg-slate-200 mx-2 hidden sm:block"></div>
             <div className="px-4 py-2 bg-purple-50 border border-purple-200 rounded-xl">
               <p className="text-xs font-black text-purple-600 uppercase tracking-widest">Administrator</p>
             </div>

@@ -4,7 +4,7 @@ import { HashRouter, Routes, Route, Navigate, Link, useLocation, useNavigate, us
 import {
   Home,
   Users,
-  Star,
+  AlertTriangle,
   Calendar as CalendarIcon,
   User as UserIcon,
   Settings,
@@ -18,9 +18,10 @@ import {
 
 import HomePage from './components/HomePage';
 import GroupsPage from './components/GroupsPage';
-import FeedbackPage from './components/FeedbackPage';
+import ReportPage from './components/ReportPage';
 import CalendarPage from './components/CalendarPage';
 import ProfilePage from './components/ProfilePage';
+import UserProfilePage from './components/UserProfilePage';
 import SettingsPage from './components/SettingsPage';
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
@@ -30,7 +31,7 @@ import AdminLogin from './components/admin/AdminLogin';
 import AdminDashboard from './components/admin/AdminDashboard';
 import AdminUsers from './components/admin/AdminUsers';
 import AdminGroups from './components/admin/AdminGroups';
-import AdminFeedback from './components/admin/AdminFeedback';
+import AdminReports from './components/admin/AdminReports';
 import AdminAnalytics from './components/admin/AdminAnalytics';
 
 import { User, AppNotification } from './types';
@@ -60,15 +61,24 @@ const SidebarLink: React.FC<{ to: string; icon: React.ReactNode; label: string }
   );
 };
 
-const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => void }> = ({ children, user, onLogout }) => {
+const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => void; showSearch?: boolean; pageTitle?: string; pageSubtitle?: string }> = ({ children, user, onLogout, showSearch = false, pageTitle, pageSubtitle }) => {
+  const navigate = useNavigate();
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const notifRef = useRef<HTMLDivElement>(null);
-  
+
   const [searchParams, setSearchParams] = useSearchParams();
   const searchQuery = searchParams.get('q') || '';
+
+  const handleNotificationClick = (notification: AppNotification) => {
+    // Navigate to the relevant group chat for message/group-related notifications
+    if (notification.data.group_id) {
+      setNotifOpen(false);
+      navigate(`/groups?group=${notification.data.group_id}`);
+    }
+  };
 
   useEffect(() => {
     fetchNotifications();
@@ -92,7 +102,15 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
         apiService.getNotifications(),
         apiService.getUnreadCount()
       ]);
-      setNotifications(list);
+
+      // Merge new notifications with existing read ones to persist read messages
+      setNotifications(prev => {
+        const newIds = new Set(list.map(n => n.id));
+        const existingRead = prev.filter(n => n.read_at && !newIds.has(n.id));
+        return [...list, ...existingRead].sort((a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+      });
       setUnreadCount(countData.count);
     } catch (err) {
       console.error("Failed to fetch notifications", err);
@@ -150,7 +168,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
         <nav className="flex-1 px-4 space-y-1">
           <SidebarLink to="/home" icon={<Home size={20} />} label="Home" />
           <SidebarLink to="/groups" icon={<Users size={20} />} label="My Groups" />
-          <SidebarLink to="/feedback" icon={<Star size={20} />} label="Feedback" />
+          <SidebarLink to="/report" icon={<AlertTriangle size={20} />} label="Report" />
           <SidebarLink to="/calendar" icon={<CalendarIcon size={20} />} label="Calendar" />
           <SidebarLink to="/profile" icon={<UserIcon size={20} />} label="Profile" />
           <SidebarLink to="/settings" icon={<Settings size={20} />} label="Settings" />
@@ -173,16 +191,24 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 hover:bg-slate-100 rounded-lg">
               <Menu className="w-6 h-6 text-slate-600" />
             </button>
-            <div className="hidden sm:flex items-center bg-slate-100 px-4 py-2 rounded-xl w-full max-w-md border border-slate-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all">
-              <Search className={`w-5 h-5 transition-colors ${searchQuery ? 'text-orange-500' : 'text-slate-400'}`} />
-              <input 
-                type="text" 
-                placeholder="Search groups, subjects, faculty..." 
-                className="bg-transparent border-none outline-none ml-3 w-full text-slate-600 placeholder:text-slate-400 font-medium"
-                value={searchQuery}
-                onChange={handleSearchChange}
-              />
-            </div>
+            {showSearch && (
+              <div className="hidden sm:flex items-center bg-slate-100 px-4 py-2 rounded-xl w-full max-w-md border border-slate-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all">
+                <Search className={`w-5 h-5 transition-colors ${searchQuery ? 'text-orange-500' : 'text-slate-400'}`} />
+                <input
+                  type="text"
+                  placeholder="Search groups, subjects, faculty..."
+                  className="bg-transparent border-none outline-none ml-3 w-full text-slate-600 placeholder:text-slate-400 font-medium"
+                  value={searchQuery}
+                  onChange={handleSearchChange}
+                />
+              </div>
+            )}
+            {pageTitle && (
+              <div className="ml-4">
+                <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">{pageTitle}</h1>
+                {pageSubtitle && <p className="text-xs text-slate-500 font-medium">{pageSubtitle}</p>}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-4">
@@ -203,6 +229,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
                   notifications={notifications}
                   onMarkRead={markAllRead}
                   onClose={() => setNotifOpen(false)}
+                  onNotificationClick={handleNotificationClick}
                   onRefresh={fetchNotifications}
                 />
               )}
@@ -228,11 +255,28 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
   );
 };
 
+const isAdminAuth = (): boolean => {
+  try {
+    const saved = localStorage.getItem('admin_auth');
+    if (!saved) return false;
+    const u = JSON.parse(saved);
+    return u?.email === 'admin@au.edu';
+  } catch { return false; }
+};
+
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('auth_user');
     return saved ? JSON.parse(saved) : null;
   });
+
+  // Force re-render when admin logs in (without changing main site user)
+  const [, setAdminTrigger] = useState(0);
+  useEffect(() => {
+    const handleAdminAuth = () => setAdminTrigger(c => c + 1);
+    window.addEventListener('admin_auth_change', handleAdminAuth);
+    return () => window.removeEventListener('admin_auth_change', handleAdminAuth);
+  }, []);
 
   const handleLogin = (userData: User) => {
     setUser(userData);
@@ -258,40 +302,43 @@ const App: React.FC = () => {
         <Route path="/signup" element={user ? <Navigate to="/home" /> : <SignupPage onSignup={handleLogin} />} />
         
         <Route path="/home" element={
-          user ? <Layout user={user} onLogout={handleLogout}><HomePage /></Layout> : <Navigate to="/login" />
+          user ? <Layout user={user} onLogout={handleLogout} showSearch={true}><HomePage /></Layout> : <Navigate to="/login" />
         } />
         <Route path="/groups" element={
-          user ? <Layout user={user} onLogout={handleLogout}><GroupsPage /></Layout> : <Navigate to="/login" />
+          user ? <Layout user={user} onLogout={handleLogout} showSearch={true}><GroupsPage /></Layout> : <Navigate to="/login" />
         } />
-        <Route path="/feedback" element={
-          user ? <Layout user={user} onLogout={handleLogout}><FeedbackPage /></Layout> : <Navigate to="/login" />
+        <Route path="/report" element={
+          user ? <Layout user={user} onLogout={handleLogout} pageTitle="Report User" pageSubtitle="Help us maintain a safe community"><ReportPage /></Layout> : <Navigate to="/login" />
         } />
         <Route path="/calendar" element={
-          user ? <Layout user={user} onLogout={handleLogout}><CalendarPage /></Layout> : <Navigate to="/login" />
+          user ? <Layout user={user} onLogout={handleLogout} pageTitle="Calendar" pageSubtitle="Manage your study schedule"><CalendarPage /></Layout> : <Navigate to="/login" />
         } />
         <Route path="/profile" element={
-          user ? <Layout user={user} onLogout={handleLogout}><ProfilePage user={user} onUserUpdate={handleUserUpdate} /></Layout> : <Navigate to="/login" />
+          user ? <Layout user={user} onLogout={handleLogout} pageTitle="Profile" pageSubtitle="View and edit your information"><ProfilePage user={user} onUserUpdate={handleUserUpdate} /></Layout> : <Navigate to="/login" />
+        } />
+        <Route path="/profile/:userId" element={
+          user ? <Layout user={user} onLogout={handleLogout}><UserProfilePage /></Layout> : <Navigate to="/login" />
         } />
         <Route path="/settings" element={
-          user ? <Layout user={user} onLogout={handleLogout}><SettingsPage /></Layout> : <Navigate to="/login" />
+          user ? <Layout user={user} onLogout={handleLogout} pageTitle="Settings" pageSubtitle="Manage your experience and data"><SettingsPage /></Layout> : <Navigate to="/login" />
         } />
 
         {/* Admin Routes */}
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/dashboard" element={
-          user && user.email === 'admin@au.edu' ? <AdminDashboard /> : <Navigate to="/admin/login" />
+          isAdminAuth() ? <AdminDashboard /> : <Navigate to="/admin/login" />
         } />
         <Route path="/admin/users" element={
-          user && user.email === 'admin@au.edu' ? <AdminUsers /> : <Navigate to="/admin/login" />
+          isAdminAuth() ? <AdminUsers /> : <Navigate to="/admin/login" />
         } />
         <Route path="/admin/groups" element={
-          user && user.email === 'admin@au.edu' ? <AdminGroups /> : <Navigate to="/admin/login" />
+          isAdminAuth() ? <AdminGroups /> : <Navigate to="/admin/login" />
         } />
-        <Route path="/admin/feedback" element={
-          user && user.email === 'admin@au.edu' ? <AdminFeedback /> : <Navigate to="/admin/login" />
+        <Route path="/admin/reports" element={
+          isAdminAuth() ? <AdminReports /> : <Navigate to="/admin/login" />
         } />
         <Route path="/admin/analytics" element={
-          user && user.email === 'admin@au.edu' ? <AdminAnalytics /> : <Navigate to="/admin/login" />
+          isAdminAuth() ? <AdminAnalytics /> : <Navigate to="/admin/login" />
         } />
         <Route path="/admin" element={<Navigate to="/admin/dashboard" />} />
 

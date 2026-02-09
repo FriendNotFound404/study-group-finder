@@ -67,14 +67,14 @@ const AdminGroups: React.FC = () => {
         setRefreshing(true);
       }
 
-      const userStr = localStorage.getItem('auth_user');
+      const userStr = localStorage.getItem('admin_auth');
       if (!userStr) return;
 
       const user = JSON.parse(userStr);
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8000/api/admin/groups?page=${currentPage}&search=${searchQuery}&status=${statusFilter}`,
+        `http://localhost:8001/api/admin/groups?page=${currentPage}&search=${searchQuery}&status=${statusFilter}`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -131,14 +131,14 @@ const AdminGroups: React.FC = () => {
 
     setSaving(true);
     try {
-      const userStr = localStorage.getItem('auth_user');
+      const userStr = localStorage.getItem('admin_auth');
       if (!userStr) return;
 
       const user = JSON.parse(userStr);
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8000/api/admin/groups/${editingGroup.id}`,
+        `http://localhost:8001/api/admin/groups/${editingGroup.id}`,
         {
           method: 'PUT',
           headers: {
@@ -163,14 +163,14 @@ const AdminGroups: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      const userStr = localStorage.getItem('auth_user');
+      const userStr = localStorage.getItem('admin_auth');
       if (!userStr) return;
 
       const user = JSON.parse(userStr);
       const token = user.token;
 
       const response = await fetch(
-        `http://localhost:8000/api/admin/groups/${id}`,
+        `http://localhost:8001/api/admin/groups/${id}`,
         {
           method: 'DELETE',
           headers: {

@@ -27,14 +27,14 @@ class DiscoverController extends Controller {
         // Specifically rank users who have the 'leader' role
         return User::where('role', 'leader')
             ->orderBy('karma_points', 'desc')
-            ->select('id', 'name', 'major', 'karma_points', 'role')
+            ->select('id', 'name', 'email', 'major', 'karma_points', 'role')
             ->take(10)
             ->get();
     }
 
     public function searchUsers(Request $request) {
         $query = $request->query('q');
-        
+
         if (!$query) {
             return $this->leaders();
         }
@@ -42,7 +42,7 @@ class DiscoverController extends Controller {
         return User::where('name', 'like', "%{$query}%")
             ->orWhere('major', 'like', "%{$query}%")
             ->orderBy('karma_points', 'desc')
-            ->select('id', 'name', 'major', 'karma_points', 'role')
+            ->select('id', 'name', 'email', 'major', 'karma_points', 'role')
             ->take(20)
             ->get();
     }

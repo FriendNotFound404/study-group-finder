@@ -1,13 +1,13 @@
 <x-mail::message>
 # Request Approved! 🎉
 
-Great news!
+Great news {{ $userName }}!
 
 Your request to join **"{{ $groupName }}"** has been approved!
 
 You can now access the group workspace, participate in discussions, and collaborate with other members.
 
-<x-mail::button :url="config('app.url') . '/groups?group=' . $groupId">
+<x-mail::button :url="config('app.url')">
 View Group Workspace
 </x-mail::button>
 

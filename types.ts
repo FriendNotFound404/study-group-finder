@@ -9,12 +9,14 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: string; 
+  role: string;
   major?: string;
   bio?: string;
   avatar?: string;
-  token?: string; 
-  location?: string; 
+  token?: string;
+  location?: string;
+  warnings?: number;
+  banned?: boolean;
 }
 
 export interface StudyGroup {
@@ -48,11 +50,25 @@ export interface Message {
   created_at: string;
 }
 
+export interface Report {
+  id: string;
+  reported_user_id: string;
+  reported_user_name: string;
+  reported_user_email?: string;
+  reason: string;
+  severity: number; // 1-5, 5 being most severe
+  description: string;
+  reporter_name: string;
+  created_at: string;
+}
+
+// Backend feedback format (used for reports)
 export interface Feedback {
   id: string;
   group_name: string;
   rating: number;
-  text: string;
+  text?: string; // Frontend submission field
+  comment?: string; // Backend storage field (what we receive)
   user_name: string;
   created_at: string;
 }

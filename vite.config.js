@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
+    base: '/study-group-finder/',
     plugins: [react()],
     define: {
       // Polyfill process.env for the browser
@@ -20,7 +21,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         // Redirect API calls to the Laravel backend
         '/api': {
-          target: 'http://127.0.0.1:8000',
+          target: 'http://127.0.0.1:8001',
           changeOrigin: true,
           secure: false,
         },

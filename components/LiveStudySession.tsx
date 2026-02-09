@@ -64,141 +64,264 @@ const LiveStudySession: React.FC<LiveStudySessionProps> = ({ onClose, subject })
   const [isMuted, setIsMuted] = useState(false);
   const [transcription, setTranscription] = useState<string[]>([]);
   const [status, setStatus] = useState('Connecting to AI Tutor...');
-  
-  const aiRef = useRef<any>(null);
+
   const sessionRef = useRef<any>(null);
   const audioContextRef = useRef<{ input: AudioContext; output: AudioContext } | null>(null);
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
+  const streamRef = useRef<MediaStream | null>(null);
+  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const sessionIdRef = useRef(0);
 
   useEffect(() => {
-    startSession();
-    return () => stopSession();
+    let mounted = true;
+    let localSession: any = null;
+    let localStream: MediaStream | null = null;
+    let localInputCtx: AudioContext | null = null;
+    let localOutputCtx: AudioContext | null = null;
+    let localScriptProcessor: ScriptProcessorNode | null = null;
+    let localSourceNode: MediaStreamAudioSourceNode | null = null;
+
+    const init = async () => {
+      try {
+        // Increment session ID to invalidate callbacks from previous sessions
+        sessionIdRef.current += 1;
+        const currentSessionId = sessionIdRef.current;
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!mounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        localStream = stream;
+        streamRef.current = stream;
+
+        const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        localInputCtx = inputCtx;
+        localOutputCtx = outputCtx;
+        audioContextRef.current = { input: inputCtx, output: outputCtx };
+
+        // Initialize GoogleGenAI with the import.meta.env.VITE_API_KEY
+        console.log('[LiveSession] API Key:', import.meta.env.VITE_API_KEY ? 'SET' : 'MISSING');
+        const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
+        console.log('[LiveSession] Attempting to connect to Gemini...');
+        const session = await ai.live.connect({
+          model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+          callbacks: {
+            onopen: () => {
+              console.log('[LiveSession] onopen callback fired - Session opened!');
+
+              // Check if this session is still the current one
+              if (currentSessionId !== sessionIdRef.current || !mounted) {
+                console.warn('[LiveSession] Session opened but a newer session has started or component unmounted');
+                return;
+              }
+
+              // Check if audio context is still valid
+              if (inputCtx.state === 'closed') {
+                console.warn('[LiveSession] Audio context closed before session opened');
+                return;
+              }
+
+              console.log('[LiveSession] Setting status to "AI Tutor is Listening"');
+              setStatus('AI Tutor is Listening');
+              setIsActive(true);
+              console.log('[LiveSession] Status and active state updated');
+
+              try {
+                const source = inputCtx.createMediaStreamSource(stream);
+                localSourceNode = source;
+                sourceNodeRef.current = source;
+
+                const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
+                localScriptProcessor = scriptProcessor;
+                scriptProcessorRef.current = scriptProcessor;
+
+                scriptProcessor.onaudioprocess = (e) => {
+                  // Check if session is still the current one
+                  if (isMuted || !sessionRef.current || currentSessionId !== sessionIdRef.current) return;
+
+                  const inputData = e.inputBuffer.getChannelData(0);
+                  const pcmBlob = createBlob(inputData);
+
+                  // Only send if session exists and is ready
+                  try {
+                    if (sessionRef.current) {
+                      sessionRef.current.sendRealtimeInput({ media: pcmBlob });
+                    }
+                  } catch (err) {
+                    console.warn('Failed to send audio data:', err);
+                  }
+                };
+
+                // Create a gain node set to 0 to keep processing alive without playing back
+                const gainNode = inputCtx.createGain();
+                gainNode.gain.value = 0;
+                source.connect(scriptProcessor);
+                scriptProcessor.connect(gainNode);
+                gainNode.connect(inputCtx.destination);
+                console.log('[LiveSession] Audio processing setup complete!');
+              } catch (err) {
+                console.error('[LiveSession] Error setting up audio processing:', err);
+              }
+            },
+            onmessage: async (message: LiveServerMessage) => {
+              // Check if this session is still the current one
+              if (currentSessionId !== sessionIdRef.current) return;
+
+              if (message.serverContent?.outputTranscription) {
+                setTranscription(prev => [...prev.slice(-4), `AI: ${message.serverContent?.outputTranscription?.text}`]);
+              }
+              if (message.serverContent?.inputTranscription) {
+                setTranscription(prev => [...prev.slice(-4), `You: ${message.serverContent?.inputTranscription?.text}`]);
+              }
+
+              const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+              if (audioData && currentSessionId === sessionIdRef.current) {
+                // Check if output context is still valid
+                if (outputCtx.state === 'closed') {
+                  return;
+                }
+
+                try {
+                  const LOOKAHEAD_TIME = 0.1;
+                  const currentTime = outputCtx.currentTime;
+
+                  if (nextStartTimeRef.current < currentTime + LOOKAHEAD_TIME) {
+                    nextStartTimeRef.current = currentTime + LOOKAHEAD_TIME;
+                  }
+
+                  const buffer = await decodeAudioData(decode(audioData), outputCtx, 24000, 1);
+                  const source = outputCtx.createBufferSource();
+                  source.buffer = buffer;
+                  source.connect(outputCtx.destination);
+                  source.start(nextStartTimeRef.current);
+                  nextStartTimeRef.current += buffer.duration;
+                  sourcesRef.current.add(source);
+                  source.onended = () => sourcesRef.current.delete(source);
+                } catch (err) {
+                  console.warn('Error playing audio response:', err);
+                }
+              }
+
+              if (message.serverContent?.interrupted) {
+                sourcesRef.current.forEach(s => {
+                  try {
+                    s.stop();
+                  } catch (e) {}
+                });
+                sourcesRef.current.clear();
+                nextStartTimeRef.current = outputCtx.currentTime;
+              }
+            },
+            onerror: (e) => {
+              console.error("[LiveSession] ERROR:", e);
+              console.error("[LiveSession] Error details:", JSON.stringify(e, null, 2));
+              setStatus('Connection Error');
+            },
+            onclose: (event?: any) => {
+              console.log('[LiveSession] onclose callback fired - Session closed');
+              console.log('[LiveSession] Close event details:', event);
+              if (event) {
+                console.log('[LiveSession] Close code:', event.code);
+                console.log('[LiveSession] Close reason:', event.reason);
+              }
+              if (currentSessionId === sessionIdRef.current) {
+                console.log('[LiveSession] Setting status to "Session Ended"');
+                setStatus('Session Ended');
+                setIsActive(false);
+
+                // Clean up audio resources when session closes unexpectedly
+                if (scriptProcessorRef.current) {
+                  scriptProcessorRef.current.disconnect();
+                  scriptProcessorRef.current = null;
+                }
+                if (sourceNodeRef.current) {
+                  sourceNodeRef.current.disconnect();
+                  sourceNodeRef.current = null;
+                }
+              }
+            }
+          },
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
+            },
+            systemInstruction: `You are an expert academic tutor for university students. The current subject is ${subject}. Help the user understand difficult concepts, solve problems, and stay motivated. Keep your answers clear, professional, and helpful. Speak naturally.`,
+            outputAudioTranscription: {},
+            inputAudioTranscription: {},
+          }
+        });
+
+        if (!mounted) {
+          console.log('[LiveSession] Component unmounted before connection completed, cleaning up');
+          session.close();
+          stream.getTracks().forEach(track => track.stop());
+          inputCtx.close();
+          outputCtx.close();
+          return;
+        }
+
+        console.log('[LiveSession] Session connected successfully!');
+        localSession = session;
+        sessionRef.current = session;
+      } catch (err) {
+        console.error('[LiveSession] Initialization error:', err);
+        if (mounted) {
+          setStatus('Failed to access microphone');
+        }
+      }
+    };
+
+    init();
+
+    return () => {
+      mounted = false;
+
+      // Clean up this mount's specific resources
+      if (localScriptProcessor) {
+        localScriptProcessor.disconnect();
+      }
+      if (localSourceNode) {
+        localSourceNode.disconnect();
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+      if (localInputCtx) {
+        localInputCtx.close();
+      }
+      if (localOutputCtx) {
+        localOutputCtx.close();
+      }
+      if (localSession) {
+        try {
+          localSession.close();
+        } catch (e) {
+          console.warn('Error closing session:', e);
+        }
+      }
+
+      // Clear global refs only if they match our local resources
+      if (sessionRef.current === localSession) {
+        sessionRef.current = null;
+      }
+      if (scriptProcessorRef.current === localScriptProcessor) {
+        scriptProcessorRef.current = null;
+      }
+      if (sourceNodeRef.current === localSourceNode) {
+        sourceNodeRef.current = null;
+      }
+      if (streamRef.current === localStream) {
+        streamRef.current = null;
+      }
+    };
   }, []);
 
-  const startSession = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      audioContextRef.current = { input: inputCtx, output: outputCtx };
 
-      // Initialize GoogleGenAI with the process.env.API_KEY directly
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
-        callbacks: {
-          onopen: () => {
-            setStatus('AI Tutor is Listening');
-            setIsActive(true);
-            const source = inputCtx.createMediaStreamSource(stream);
-            const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
-            scriptProcessor.onaudioprocess = (e) => {
-              if (isMuted) return;
-              const inputData = e.inputBuffer.getChannelData(0);
-              const pcmBlob = createBlob(inputData);
-              // Send input only after session promise resolves to avoid race conditions
-              sessionPromise.then(session => session.sendRealtimeInput({ media: pcmBlob }));
-            };
-
-            // Create a gain node set to 0 to keep processing alive without playing back
-            const gainNode = inputCtx.createGain();
-            gainNode.gain.value = 0; // Mute the microphone input playback
-
-            // Connect: microphone → scriptProcessor → gainNode (muted) → destination
-            // This keeps scriptProcessor active without creating audio feedback
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(gainNode);
-            gainNode.connect(inputCtx.destination);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent?.outputTranscription) {
-              setTranscription(prev => [...prev.slice(-4), `AI: ${message.serverContent?.outputTranscription?.text}`]);
-            }
-            if (message.serverContent?.inputTranscription) {
-              setTranscription(prev => [...prev.slice(-4), `You: ${message.serverContent?.inputTranscription?.text}`]);
-            }
-
-            const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (audioData && audioContextRef.current) {
-              const { output } = audioContextRef.current;
-
-              // Add a small buffer (lookahead) to prevent stuttering
-              const LOOKAHEAD_TIME = 0.1; // 100ms buffer
-              const currentTime = output.currentTime;
-
-              // If nextStartTime is in the past or too close, schedule immediately with buffer
-              if (nextStartTimeRef.current < currentTime + LOOKAHEAD_TIME) {
-                nextStartTimeRef.current = currentTime + LOOKAHEAD_TIME;
-              }
-
-              const buffer = await decodeAudioData(decode(audioData), output, 24000, 1);
-              const source = output.createBufferSource();
-              source.buffer = buffer;
-              source.connect(output.destination);
-
-              // Start playback at the scheduled time
-              source.start(nextStartTimeRef.current);
-
-              // Update next start time for seamless playback
-              nextStartTimeRef.current += buffer.duration;
-
-              sourcesRef.current.add(source);
-              source.onended = () => sourcesRef.current.delete(source);
-            }
-
-            if (message.serverContent?.interrupted) {
-              // Stop all playing audio sources
-              sourcesRef.current.forEach(s => {
-                try {
-                  s.stop();
-                } catch (e) {
-                  // Source might have already stopped
-                }
-              });
-              sourcesRef.current.clear();
-
-              // Reset nextStartTime to current time to prevent gaps
-              if (audioContextRef.current) {
-                nextStartTimeRef.current = audioContextRef.current.output.currentTime;
-              }
-            }
-          },
-          onerror: (e) => {
-            console.error("Live Error:", e);
-            setStatus('Connection Error');
-          },
-          onclose: () => {
-            setStatus('Session Ended');
-            setIsActive(false);
-          }
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-          },
-          systemInstruction: `You are an expert academic tutor for university students. The current subject is ${subject}. Help the user understand difficult concepts, solve problems, and stay motivated. Keep your answers clear, professional, and helpful. Speak naturally.`,
-          outputAudioTranscription: {},
-          inputAudioTranscription: {},
-        }
-      });
-
-      sessionRef.current = await sessionPromise;
-    } catch (err) {
-      console.error(err);
-      setStatus('Failed to access microphone');
-    }
-  };
-
-  const stopSession = () => {
-    if (sessionRef.current) sessionRef.current.close();
-    if (audioContextRef.current) {
-      audioContextRef.current.input.close();
-      audioContextRef.current.output.close();
-    }
-    setIsActive(false);
-  };
 
   return (
     <div className="fixed inset-0 z-[100] bg-slate-900/95 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in duration-300">
