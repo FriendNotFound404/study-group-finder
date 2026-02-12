@@ -6,9 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\StudyGroup;
 use App\Models\Notification;
 use App\Models\User;
+use App\Services\KarmaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
+use App\Mail\GroupJoinNotification;
 use App\Mail\JoinRequestMail;
 use App\Mail\JoinApprovedMail;
 use App\Mail\JoinRejectedMail;
@@ -52,6 +55,9 @@ class StudyGroupController extends Controller
             'status' => 'approved',
             'approved_at' => now()
         ]);
+
+        // Award karma for creating a group
+        KarmaService::awardGroupCreation($user);
 
         return response()->json($group, 201);
     }
@@ -144,13 +150,19 @@ class StudyGroupController extends Controller
                 $leader = User::find($group->creator_id);
                 if ($leader && $leader->email_verified_at) {
                     try {
-                        // Note: For group_join, we're not sending email to avoid spam
-                        // Only join requests, approvals, and removals get emails
+                        Mail::to($leader->email)->send(new GroupJoinNotification(
+                            $user->name,
+                            $group->name,
+                            $group->id
+                        ));
                     } catch (\Exception $e) {
                         \Log::error('Failed to send group join email: ' . $e->getMessage());
                     }
                 }
             }
+
+            // Award karma for joining a group
+            KarmaService::awardGroupJoin($user);
 
             return response()->json(['message' => 'Successfully joined the group!']);
 
@@ -208,7 +220,13 @@ class StudyGroupController extends Controller
 
     public function leave($id) {
         $group = StudyGroup::findOrFail($id);
-        $group->members()->detach(Auth::id());
+        $user = Auth::user();
+
+        $group->members()->detach($user->id);
+
+        // Deduct karma for leaving a group
+        KarmaService::penalizeLeave($user);
+
         return response()->json(['message' => 'Left successfully']);
     }
 
@@ -334,6 +352,9 @@ class StudyGroupController extends Controller
                     \Log::error('Failed to send join approved email: ' . $e->getMessage());
                 }
             }
+
+            // Award karma for successful join approval
+            KarmaService::awardJoinApproval($requestingUser);
         }
 
         return response()->json(['message' => 'Join request approved successfully.']);
@@ -441,6 +462,9 @@ class StudyGroupController extends Controller
                     \Log::error('Failed to send removed from group email: ' . $e->getMessage());
                 }
             }
+
+            // Deduct karma for being kicked from a group
+            KarmaService::penalizeKick($removedUser);
         }
 
         return response()->json(['message' => 'Member removed successfully.']);

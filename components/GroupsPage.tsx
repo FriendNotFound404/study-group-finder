@@ -6,12 +6,13 @@ import { geminiService } from '../services/geminiService';
 import { apiService } from '../services/apiService';
 import LiveStudySession from './LiveStudySession';
 import PendingRequestsModal from './PendingRequestsModal';
+import StudyPlanModal from './StudyPlanModal';
 // FIX: Import API_CONFIG from constants to resolve reference error in handleDeleteGroup
 import { API_CONFIG } from '../constants';
 
 const GroupsPage: React.FC = () => {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [myGroups, setMyGroups] = useState<StudyGroup[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(true);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(searchParams.get('group'));
@@ -24,6 +25,7 @@ const GroupsPage: React.FC = () => {
   const [summary, setSummary] = useState<string | null>(null);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [studyPlan, setStudyPlan] = useState<string | null>(null);
+  const [showStudyPlanModal, setShowStudyPlanModal] = useState(false);
   const [showLiveSession, setShowLiveSession] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -31,8 +33,9 @@ const GroupsPage: React.FC = () => {
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [kickingMemberId, setKickingMemberId] = useState<number | null>(null);
   const [leavingGroup, setLeavingGroup] = useState(false);
+  const [showArchivedGroups, setShowArchivedGroups] = useState(false);
 
-  const [newMeeting, setNewMeeting] = useState({ title: '', start_time: '', location: '', recurrence: 'none' });
+  const [newMeeting, setNewMeeting] = useState({ title: '', start_time: '', location: '', recurrence: 'none', recurrence_count: '' });
   const [scheduling, setScheduling] = useState(false);
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -61,6 +64,9 @@ const GroupsPage: React.FC = () => {
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [rescheduleEvent, setRescheduleEvent] = useState<any | null>(null);
   const [rescheduleTime, setRescheduleTime] = useState('');
+  const [rescheduleRecurrence, setRescheduleRecurrence] = useState('none');
+  const [rescheduleRecurrenceCount, setRescheduleRecurrenceCount] = useState('');
+  const [rescheduleLocation, setRescheduleLocation] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
 
@@ -83,12 +89,27 @@ const GroupsPage: React.FC = () => {
   const searchQuery = (searchParams.get('q') || '').toLowerCase();
 
   const filteredMyGroups = useMemo(() => {
-    if (!searchQuery) return myGroups;
-    return myGroups.filter(g =>
-      g.name.toLowerCase().includes(searchQuery) ||
-      g.subject.toLowerCase().includes(searchQuery)
-    );
-  }, [myGroups, searchQuery]);
+    let filtered = myGroups;
+
+    // Filter by archived status
+    if (showArchivedGroups) {
+      // Show only archived groups
+      filtered = filtered.filter(g => g.status === GroupStatus.ARCHIVED);
+    } else {
+      // Exclude archived groups from normal view
+      filtered = filtered.filter(g => g.status !== GroupStatus.ARCHIVED);
+    }
+
+    // Apply search filter
+    if (searchQuery) {
+      filtered = filtered.filter(g =>
+        g.name.toLowerCase().includes(searchQuery) ||
+        g.subject.toLowerCase().includes(searchQuery)
+      );
+    }
+
+    return filtered;
+  }, [myGroups, searchQuery, showArchivedGroups]);
 
   // Sort groups: unread messages first, then by most recent activity
   const sortedFilteredGroups = useMemo(() => {
@@ -112,7 +133,6 @@ const GroupsPage: React.FC = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
-  const studyPlanRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchMyGroups();
@@ -131,6 +151,14 @@ const GroupsPage: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Sync URL parameter to active group state
+  useEffect(() => {
+    const groupIdFromUrl = searchParams.get('group');
+    if (groupIdFromUrl && groupIdFromUrl !== activeGroupId) {
+      setActiveGroupId(groupIdFromUrl);
+    }
+  }, [searchParams]);
 
   const fetchMyGroups = async () => {
     try {
@@ -186,6 +214,7 @@ const GroupsPage: React.FC = () => {
       fetchMessages();
       setSummary(null);
       setStudyPlan(null);
+      setShowStudyPlanModal(false);
 
       // Clear unread badge for this group immediately
       setUnreadCounts(prev => {
@@ -194,11 +223,6 @@ const GroupsPage: React.FC = () => {
         console.log(`[Group Switch] Cleared badge for ${activeGroupName}`);
         return next;
       });
-
-      const q = searchParams.get('q');
-      const newParams: any = { group: activeGroupId };
-      if (q) newParams.q = q;
-      setSearchParams(newParams);
     }
   }, [activeGroupId]);
 
@@ -214,15 +238,6 @@ const GroupsPage: React.FC = () => {
       }, 100);
     }
   }, [summary]);
-
-  // Auto-scroll to study plan when it's generated
-  useEffect(() => {
-    if (studyPlan) {
-      setTimeout(() => {
-        studyPlanRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 100);
-    }
-  }, [studyPlan]);
 
   // Poll for new messages in the active group (real-time feel)
   useEffect(() => {
@@ -344,12 +359,35 @@ const GroupsPage: React.FC = () => {
   };
 
   const handleSummarize = async () => {
-    if (messages.length === 0) return;
+    if (messages.length === 0) {
+      alert('No messages to summarize yet.');
+      return;
+    }
+
     setIsSummarizing(true);
-    const content = messages.map(m => `${m.user_name}: ${m.content}`);
-    const res = await geminiService.summarizeChat(content);
-    setSummary(res || 'No summary available.');
-    setIsSummarizing(false);
+    setSummary(null); // Clear previous summary
+
+    try {
+      // Filter out messages that only have files and no text content
+      const textMessages = messages
+        .filter(m => m.content && m.content.trim().length > 0)
+        .map(m => `${m.user_name}: ${m.content}`);
+
+      if (textMessages.length === 0) {
+        setSummary('No text messages to summarize. The chat only contains files.');
+        setIsSummarizing(false);
+        return;
+      }
+
+      console.log('[GroupsPage] Summarizing', textMessages.length, 'messages');
+      const res = await geminiService.summarizeChat(textMessages);
+      setSummary(res || 'No summary available.');
+    } catch (error: any) {
+      console.error('[GroupsPage] Summary error:', error);
+      setSummary(`Failed to generate summary: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsSummarizing(false);
+    }
   };
 
   const handleGeneratePlan = async () => {
@@ -357,6 +395,7 @@ const GroupsPage: React.FC = () => {
     setIsGeneratingPlan(true);
     const plan = await geminiService.suggestStudyPlan(activeGroup.subject);
     setStudyPlan(plan);
+    setShowStudyPlanModal(true);
     setIsGeneratingPlan(false);
   };
 
@@ -370,13 +409,14 @@ const GroupsPage: React.FC = () => {
         start_time: newMeeting.start_time,
         location: newMeeting.location,
         recurrence: newMeeting.recurrence,
+        recurrence_count: newMeeting.recurrence_count,
         type: 'Group Meeting',
         group_id: activeGroupId
       });
 
       // Share meeting details to group chat
       const dateStr = new Date(newMeeting.start_time).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      const recurrenceLabel = newMeeting.recurrence !== 'none' ? ` (Repeats ${newMeeting.recurrence})` : '';
+      const recurrenceLabel = newMeeting.recurrence !== 'none' && newMeeting.recurrence_count ? ` (Repeats ${newMeeting.recurrence} for ${newMeeting.recurrence_count} occurrences)` : '';
       const locationStr = newMeeting.location ? `\nLocation: ${newMeeting.location}` : '';
       const chatMsg = `📅 New Meeting Scheduled!\n\n${newMeeting.title}\n${dateStr}${recurrenceLabel}${locationStr}\n\nAll members have been notified.`;
       try {
@@ -384,7 +424,7 @@ const GroupsPage: React.FC = () => {
         setMessages(prev => [...prev, sentMsg]);
       } catch {}
 
-      setNewMeeting({ title: '', start_time: '', location: '', recurrence: 'none' });
+      setNewMeeting({ title: '', start_time: '', location: '', recurrence: 'none', recurrence_count: '' });
       setShowScheduleForm(false);
       await fetchGroupEvents(activeGroupId);
     } catch (err) {
@@ -524,18 +564,22 @@ const GroupsPage: React.FC = () => {
     if (!rescheduleEvent || !rescheduleTime) return;
     setActionLoading(rescheduleEvent.id);
     try {
-      // Delete old event then create a new one with updated time
+      // Delete old event then create a new one with updated time and recurrence
       await apiService.deleteEvent(rescheduleEvent.id);
       await apiService.createEvent({
         title: rescheduleEvent.title,
         type: rescheduleEvent.type || 'Group Meeting',
         start_time: rescheduleTime,
-        location: rescheduleEvent.location || '',
-        recurrence: rescheduleEvent.recurrence || 'none',
+        location: rescheduleLocation,
+        recurrence: rescheduleRecurrence,
+        recurrence_count: rescheduleRecurrenceCount,
         group_id: rescheduleEvent.group_id || activeGroupId,
       });
       setRescheduleEvent(null);
       setRescheduleTime('');
+      setRescheduleRecurrence('none');
+      setRescheduleRecurrenceCount('');
+      setRescheduleLocation('');
       if (activeGroupId) await fetchGroupEvents(activeGroupId);
     } catch (err) {
       alert('Failed to reschedule meeting.');
@@ -570,7 +614,20 @@ const GroupsPage: React.FC = () => {
   return (
     <div className="h-full flex flex-col lg:flex-row gap-6 animate-in fade-in duration-500">
       <div className="w-full lg:w-80 flex flex-col gap-4">
-        <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Your Study Groups</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Your Study Groups</h2>
+          <button
+            onClick={() => setShowArchivedGroups(!showArchivedGroups)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+              showArchivedGroups
+                ? 'bg-slate-500 text-white shadow-md'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <Archive size={14} />
+            {showArchivedGroups ? 'Active' : 'Archived'}
+          </button>
+        </div>
         <div className="flex-1 space-y-3 overflow-y-auto pr-2 pb-4">
           {myGroups.length === 0 ? (
             <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2rem] p-8 text-center space-y-4">
@@ -580,10 +637,19 @@ const GroupsPage: React.FC = () => {
             </div>
           ) : (
             <>
-              {sortedFilteredGroups.length === 0 && searchQuery && (
+              {sortedFilteredGroups.length === 0 && (
                 <div className="p-8 text-center opacity-40">
-                  <Search size={24} className="mx-auto mb-2" />
-                  <p className="text-xs font-bold uppercase tracking-widest">No matching groups</p>
+                  {searchQuery ? (
+                    <>
+                      <Search size={24} className="mx-auto mb-2" />
+                      <p className="text-xs font-bold uppercase tracking-widest">No matching groups</p>
+                    </>
+                  ) : showArchivedGroups ? (
+                    <>
+                      <Archive size={24} className="mx-auto mb-2" />
+                      <p className="text-xs font-bold uppercase tracking-widest">No archived groups</p>
+                    </>
+                  ) : null}
                 </div>
               )}
               {sortedFilteredGroups.map(group => {
@@ -658,7 +724,7 @@ const GroupsPage: React.FC = () => {
                   className="flex flex-col items-center justify-center p-4 bg-purple-50 text-purple-600 rounded-2xl hover:bg-purple-100 transition-all gap-2"
                 >
                   <UsersIcon size={18} />
-                  <span className="text-[10px] font-black uppercase">Members</span>
+                  <span className="text-[10px] font-black uppercase">Details</span>
                 </button>
               )}
               {isLeader && (
@@ -738,13 +804,6 @@ const GroupsPage: React.FC = () => {
                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-2">Manage Hub</p>
                         </div>
                         <button 
-                          onClick={handleOpenEditModal}
-                          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors text-slate-600"
-                        >
-                          <Edit2 size={14} />
-                          <span className="text-xs font-bold flex-1">Edit Hub Details</span>
-                        </button>
-                        <button 
                           onClick={() => updateStatus(GroupStatus.OPEN)}
                           disabled={isUpdatingStatus}
                           className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-emerald-50 transition-colors ${activeGroup.status === GroupStatus.OPEN ? 'text-emerald-600 bg-emerald-50' : 'text-slate-600'}`}
@@ -762,24 +821,15 @@ const GroupsPage: React.FC = () => {
                           <span className="text-xs font-bold flex-1">Set Closed</span>
                           {activeGroup.status === GroupStatus.CLOSED && <CheckCircle2 size={12} />}
                         </button>
-                        <button 
+                        <button
                           onClick={() => updateStatus(GroupStatus.ARCHIVED)}
                           disabled={isUpdatingStatus}
                           className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-100 transition-colors ${activeGroup.status === GroupStatus.ARCHIVED ? 'text-slate-900 bg-slate-50' : 'text-slate-400'}`}
                         >
                           <Archive size={14} />
-                          <span className="text-xs font-bold flex-1">Archive Hub</span>
+                          <span className="text-xs font-bold flex-1">Archive</span>
                           {activeGroup.status === GroupStatus.ARCHIVED && <CheckCircle2 size={12} />}
                         </button>
-                        <div className="border-t border-slate-50">
-                          <button 
-                            onClick={handleDeleteGroup}
-                            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-red-50 transition-colors text-red-500"
-                          >
-                            <Trash2 size={14} />
-                            <span className="text-xs font-bold flex-1">Dissolve Hub</span>
-                          </button>
-                        </div>
                       </div>
                    )}
                 </div>
@@ -809,23 +859,6 @@ const GroupsPage: React.FC = () => {
                       </div>
                       <p className="text-sm text-orange-800 leading-relaxed font-medium">{summary}</p>
                       <button onClick={() => setSummary(null)} className="text-[10px] font-black text-orange-400 uppercase mt-4 hover:text-orange-600 transition-colors">Dismiss</button>
-                    </div>
-                  )}
-
-                  {studyPlan && (
-                    <div ref={studyPlanRef} className="bg-blue-50 border border-blue-100 p-6 rounded-3xl shadow-sm mb-6">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2 text-blue-600">
-                          <BookOpen size={20} />
-                          <span className="text-xs font-bold uppercase tracking-widest">Suggested Study Plan</span>
-                        </div>
-                        <button onClick={() => setStudyPlan(null)} className="text-blue-300 hover:text-blue-500">
-                          <X size={16} />
-                        </button>
-                      </div>
-                      <div className="text-sm text-blue-800 leading-relaxed prose prose-blue max-w-none whitespace-pre-wrap font-medium">
-                        {studyPlan}
-                      </div>
                     </div>
                   )}
 
@@ -1077,6 +1110,14 @@ const GroupsPage: React.FC = () => {
         />
       )}
 
+      {showStudyPlanModal && studyPlan && activeGroup && (
+        <StudyPlanModal
+          studyPlan={studyPlan}
+          subject={activeGroup.subject}
+          onClose={() => setShowStudyPlanModal(false)}
+        />
+      )}
+
       {showPendingRequestsModal && activeGroup && (
         <PendingRequestsModal
           groupId={activeGroup.id}
@@ -1227,14 +1268,25 @@ const GroupsPage: React.FC = () => {
             </div>
 
             {/* Footer */}
-            <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-              <button
-                onClick={() => setShowMembersModal(false)}
-                className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-slate-900 transition-colors"
-              >
-                Close
-              </button>
-              {!isLeader && (
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+              {isLeader ? (
+                <>
+                  <button
+                    onClick={handleOpenEditModal}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-orange-600 transition-all"
+                  >
+                    <Edit2 size={14} />
+                    Edit Group
+                  </button>
+                  <button
+                    onClick={handleDeleteGroup}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-red-600 transition-all"
+                  >
+                    <Trash2 size={14} />
+                    Delete Group
+                  </button>
+                </>
+              ) : (
                 <button
                   onClick={handleLeaveGroup}
                   disabled={leavingGroup}
@@ -1305,6 +1357,17 @@ const GroupsPage: React.FC = () => {
                         <option value="monthly">Monthly</option>
                       </select>
                     </div>
+                    {newMeeting.recurrence !== 'none' && (
+                      <input
+                        type="number"
+                        placeholder={`How many ${newMeeting.recurrence === 'daily' ? 'days' : newMeeting.recurrence === 'weekly' ? 'weeks' : 'months'}?`}
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-emerald-500"
+                        value={newMeeting.recurrence_count}
+                        onChange={e => setNewMeeting({...newMeeting, recurrence_count: e.target.value})}
+                        min="1"
+                        max="365"
+                      />
+                    )}
                   </div>
                   <div className="relative">
                     <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
@@ -1381,7 +1444,13 @@ const GroupsPage: React.FC = () => {
                           <div className="flex items-center gap-1.5 shrink-0">
                             {/* Reschedule */}
                             <button
-                              onClick={() => { setRescheduleEvent(event); setRescheduleTime(event.start_time?.slice(0, 16) || ''); }}
+                              onClick={() => {
+                                setRescheduleEvent(event);
+                                setRescheduleTime(event.start_time?.slice(0, 16) || '');
+                                setRescheduleRecurrence(event.recurrence || 'none');
+                                setRescheduleRecurrenceCount(event.recurrence_count || '');
+                                setRescheduleLocation(event.location || '');
+                              }}
                               disabled={actionLoading === event.id}
                               className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-all"
                               title="Reschedule"
@@ -1389,12 +1458,12 @@ const GroupsPage: React.FC = () => {
                               <CalendarIcon size={16} />
                             </button>
 
-                            {/* Delete */}
+                            {/* Cancel */}
                             <button
                               onClick={() => handleDeleteMeeting(event.id)}
                               disabled={actionLoading === event.id}
                               className="p-2 text-red-400 hover:bg-red-50 hover:text-red-500 rounded-lg transition-all"
-                              title="Delete"
+                              title="Cancel"
                             >
                               {actionLoading === event.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                             </button>
@@ -1436,7 +1505,12 @@ const GroupsPage: React.FC = () => {
                 <h3 className="text-xl font-bold">Reschedule Meeting</h3>
                 <p className="text-blue-100 text-xs font-bold mt-1 truncate">{rescheduleEvent.title}</p>
               </div>
-              <button onClick={() => setRescheduleEvent(null)}><X size={20} /></button>
+              <button onClick={() => {
+                setRescheduleEvent(null);
+                setRescheduleRecurrence('none');
+                setRescheduleRecurrenceCount('');
+                setRescheduleLocation('');
+              }}><X size={20} /></button>
             </div>
             <div className="p-8 space-y-4">
               <div className="space-y-1">
@@ -1458,9 +1532,55 @@ const GroupsPage: React.FC = () => {
                   />
                 </div>
               </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Recurrence</label>
+                <select
+                  value={rescheduleRecurrence}
+                  onChange={e => setRescheduleRecurrence(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="none">One-time</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+              {rescheduleRecurrence !== 'none' && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    How many {rescheduleRecurrence === 'daily' ? 'days' : rescheduleRecurrence === 'weekly' ? 'weeks' : 'months'}?
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="Count"
+                    value={rescheduleRecurrenceCount}
+                    onChange={e => setRescheduleRecurrenceCount(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                    min="1"
+                    max="365"
+                  />
+                </div>
+              )}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
+                <div className="relative">
+                  <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                  <input
+                    placeholder="Location or link (optional)"
+                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                    value={rescheduleLocation}
+                    onChange={e => setRescheduleLocation(e.target.value)}
+                  />
+                </div>
+              </div>
               <div className="flex gap-3 pt-2">
                 <button
-                  onClick={() => setRescheduleEvent(null)}
+                  onClick={() => {
+                    setRescheduleEvent(null);
+                    setRescheduleRecurrence('none');
+                    setRescheduleRecurrenceCount('');
+                    setRescheduleLocation('');
+                  }}
                   className="flex-1 py-3 border-2 border-slate-100 rounded-xl font-black text-xs uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all"
                 >
                   Cancel

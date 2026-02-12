@@ -12,7 +12,7 @@ class StudyGroup extends Model
         'location', 'creator_id', 'status'
     ];
 
-    protected $appends = ['members_count', 'creator_name', 'is_member', 'has_pending_request', 'pending_requests_count'];
+    protected $appends = ['members_count', 'creator_name', 'is_member', 'has_pending_request', 'pending_requests_count', 'avg_group_rating', 'avg_leader_rating', 'total_ratings'];
 
     public function creator() {
         return $this->belongsTo(User::class, 'creator_id');
@@ -49,6 +49,10 @@ class StudyGroup extends Model
         return $this->hasMany(Event::class, 'group_id');
     }
 
+    public function ratings() {
+        return $this->hasMany(Rating::class, 'group_id');
+    }
+
     public function getMembersCountAttribute() {
         return $this->members()->count();
     }
@@ -71,5 +75,17 @@ class StudyGroup extends Model
 
     public function getPendingRequestsCountAttribute() {
         return $this->pendingRequests()->count();
+    }
+
+    public function getAvgGroupRatingAttribute() {
+        return round($this->ratings()->avg('group_rating') ?? 0, 1);
+    }
+
+    public function getAvgLeaderRatingAttribute() {
+        return round($this->ratings()->avg('leader_rating') ?? 0, 1);
+    }
+
+    public function getTotalRatingsAttribute() {
+        return $this->ratings()->count();
     }
 }

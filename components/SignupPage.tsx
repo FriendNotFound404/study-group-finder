@@ -9,6 +9,7 @@ const SignupPage: React.FC<{ onSignup: (u: User) => void }> = ({ onSignup }) => 
   const [formData, setFormData] = useState({ name: '', email: '', pass: '', confirm: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const navigate = useNavigate();
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -29,7 +30,16 @@ const SignupPage: React.FC<{ onSignup: (u: User) => void }> = ({ onSignup }) => 
       });
       const authData = { ...response.user, token: response.token };
       onSignup(authData);
-      navigate('/home');
+
+      // Show verification message if included in response
+      if (response.message) {
+        setSuccessMessage(response.message);
+      }
+
+      // Navigate after a brief delay to show the message
+      setTimeout(() => {
+        navigate('/home');
+      }, 2000);
     } catch (err: any) {
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
@@ -49,6 +59,13 @@ const SignupPage: React.FC<{ onSignup: (u: User) => void }> = ({ onSignup }) => 
         {error && (
           <div className="bg-red-50 text-red-600 p-4 rounded-2xl text-xs font-bold border border-red-100">
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="bg-green-50 text-green-700 p-4 rounded-2xl text-xs font-bold border border-green-100 flex items-center gap-2">
+            <Mail size={16} />
+            {successMessage}
           </div>
         )}
 

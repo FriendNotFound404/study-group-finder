@@ -6,8 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Event;
 use App\Models\StudyGroup;
 use App\Models\Notification;
+use App\Services\KarmaService;
+use App\Mail\EventCreatedMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 
 class CalendarController extends Controller {
     public function index() {
@@ -28,7 +32,9 @@ class CalendarController extends Controller {
             'type' => 'required|string',
             'start_time' => 'required|date',
             'location' => 'nullable|string',
-            'group_id' => 'nullable|exists:study_groups,id'
+            'group_id' => 'nullable|exists:study_groups,id',
+            'recurrence' => 'nullable|string|in:none,daily,weekly,monthly',
+            'recurrence_count' => 'nullable|integer|min:1|max:365'
         ]);
 
         // Authorization check: Only the Leader (creator) of a group can add sessions to it
@@ -38,13 +44,60 @@ class CalendarController extends Controller {
                 return response()->json(['message' => 'Unauthorized. Only the group leader can schedule sessions for this hub.'], 403);
             }
         }
-        
-        $event = Auth::user()->events()->create($validated);
 
-        // If this is a group event, notify all members
+        $user = Auth::user();
+
+        // Create the first event
+        $event = $user->events()->create($validated);
+
+        // Award karma for creating a meeting/event
+        KarmaService::awardMeetingCreation($user);
+
+        // Handle recurrence - create additional events
+        $createdEvents = [$event];
+        if ($request->filled('recurrence') && $request->recurrence !== 'none' && $request->filled('recurrence_count')) {
+            $startTime = new \DateTime($validated['start_time']);
+
+            for ($i = 1; $i < $request->recurrence_count; $i++) {
+                // Calculate next occurrence
+                switch ($request->recurrence) {
+                    case 'daily':
+                        $startTime->modify('+1 day');
+                        break;
+                    case 'weekly':
+                        $startTime->modify('+1 week');
+                        break;
+                    case 'monthly':
+                        $startTime->modify('+1 month');
+                        break;
+                }
+
+                // Create recurring event
+                $recurringEvent = $user->events()->create([
+                    'title' => $validated['title'],
+                    'type' => $validated['type'],
+                    'start_time' => $startTime->format('Y-m-d H:i:s'),
+                    'location' => $validated['location'] ?? null,
+                    'group_id' => $validated['group_id'] ?? null,
+                    'recurrence' => $validated['recurrence'],
+                    'recurrence_count' => $validated['recurrence_count']
+                ]);
+
+                $createdEvents[] = $recurringEvent;
+            }
+        }
+
+        // If this is a group event, notify all members (only once, not for each recurring event)
         if ($request->filled('group_id')) {
             $group = $group ?? StudyGroup::findOrFail($request->group_id);
             $members = $group->members()->where('users.id', '!=', Auth::id())->get();
+            $eventTime = date('M j, Y g:i A', strtotime($event->start_time));
+
+            // Add recurrence info to notification
+            $recurrenceInfo = '';
+            if ($request->recurrence !== 'none' && $request->filled('recurrence_count')) {
+                $recurrenceInfo = " (Repeats {$request->recurrence} for {$request->recurrence_count} occurrences)";
+            }
 
             foreach ($members as $member) {
                 Notification::create([
@@ -52,13 +105,31 @@ class CalendarController extends Controller {
                     'type' => 'event',
                     'data' => [
                         'group_name' => $group->name,
-                        'message' => "New meeting scheduled for '{$group->name}': {$event->title} on " . date('M j, g:i A', strtotime($event->start_time))
+                        'message' => "New meeting scheduled for '{$group->name}': {$event->title} on {$eventTime}{$recurrenceInfo}"
                     ]
                 ]);
+
+                // Send email notification if member's email is verified
+                if ($member->email_verified_at) {
+                    try {
+                        Mail::to($member->email)->send(new EventCreatedMail(
+                            $member->name,
+                            $group->name,
+                            $event->title,
+                            $eventTime
+                        ));
+                    } catch (\Exception $e) {
+                        Log::error('Failed to send event notification email: ' . $e->getMessage());
+                    }
+                }
             }
         }
-        
-        return $event;
+
+        return response()->json([
+            'message' => 'Event(s) created successfully',
+            'events' => $createdEvents,
+            'count' => count($createdEvents)
+        ]);
     }
 
     public function destroy($id) {

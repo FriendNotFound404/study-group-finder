@@ -8,6 +8,7 @@ use App\Models\StudyGroup;
 use App\Models\Message;
 use App\Models\Feedback;
 use App\Models\Notification;
+use App\Services\KarmaService;
 use App\Mail\UserWarnedMail;
 use App\Mail\UserBannedMail;
 use Illuminate\Http\Request;
@@ -316,11 +317,17 @@ class AdminController extends Controller
 
         $user->warnings = ($user->warnings ?? 0) + 1;
 
+        // Deduct karma for receiving a warning
+        KarmaService::penalizeWarning($user);
+
         // Auto-ban if warnings reach 3
         $autoBanned = false;
         if ($user->warnings >= 3) {
             $user->banned = true;
             $autoBanned = true;
+
+            // Additional karma penalty for ban
+            KarmaService::penalizeBan($user);
         }
 
         $user->save();
@@ -396,6 +403,9 @@ class AdminController extends Controller
 
         $user->banned = true;
         $user->save();
+
+        // Deduct karma for being banned
+        KarmaService::penalizeBan($user);
 
         $banReason = 'Direct ban by administrator. Please contact support for assistance.';
 

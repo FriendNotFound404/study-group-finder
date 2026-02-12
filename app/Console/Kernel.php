@@ -9,7 +9,10 @@ class Kernel extends ConsoleKernel
 {
     protected function schedule(Schedule $schedule): void
     {
-        // $schedule->command('inspire')->hourly();
+        // Send event reminder emails daily at 9:00 AM
+        $schedule->command('events:send-reminders')
+                 ->dailyAt('09:00')
+                 ->timezone('America/New_York');
     }
 
     protected function commands(): void

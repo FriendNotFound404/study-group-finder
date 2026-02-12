@@ -10,10 +10,14 @@ use App\Http\Controllers\API\CalendarController;
 use App\Http\Controllers\API\ProfileController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
+use App\Http\Controllers\API\RatingController;
 
 // Auth
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+
+// Email Verification (public route for clicking email link)
+Route::get('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])->name('verification.verify');
 
 // Admin Notifications (public access for admin panel)
 Route::get('/admin/notifications', [AdminController::class, 'getNotifications']);
@@ -22,6 +26,10 @@ Route::post('/admin/notifications/mark-read', [AdminController::class, 'markNoti
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Email Verification (authenticated routes)
+    Route::post('/email/resend', [AuthController::class, 'resendVerification']);
+    Route::get('/email/verification-status', [AuthController::class, 'checkVerificationStatus']);
 
     // Groups
     Route::apiResource('groups', StudyGroupController::class);
@@ -32,6 +40,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/groups/{groupId}/approve/{userId}', [StudyGroupController::class, 'approveRequest']);
     Route::post('/groups/{groupId}/reject/{userId}', [StudyGroupController::class, 'rejectRequest']);
     Route::post('/groups/{groupId}/kick/{userId}', [StudyGroupController::class, 'kickMember']);
+
+    // Ratings
+    Route::post('/groups/{groupId}/rate', [RatingController::class, 'store']);
+    Route::delete('/groups/{groupId}/rate', [RatingController::class, 'destroy']);
+    Route::get('/groups/{groupId}/my-rating', [RatingController::class, 'show']);
 
     // Chat
     Route::get('/groups/{id}/messages', [MessageController::class, 'index']);

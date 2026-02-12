@@ -21,10 +21,14 @@ const CalendarPage: React.FC = () => {
     } catch { return null; }
   }, []);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newEvent, setNewEvent] = useState({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none' });
+  const [newEvent, setNewEvent] = useState({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none', recurrence_count: '' });
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
   const [sharingToGroup, setSharingToGroup] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
+  const [showEventSelector, setShowEventSelector] = useState(false);
+  const [selectedEventsToShare, setSelectedEventsToShare] = useState<string[]>([]);
+  const [editingEvent, setEditingEvent] = useState<any | null>(null);
+  const [editEventData, setEditEventData] = useState({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none', recurrence_count: '' });
 
   const now = new Date();
   const [currentMonth, setCurrentMonth] = useState(now.getMonth());
@@ -105,7 +109,7 @@ const CalendarPage: React.FC = () => {
       setIsModalOpen(false);
       const data = await apiService.getEvents();
       setEvents(data);
-      setNewEvent({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none' });
+      setNewEvent({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none', recurrence_count: '' });
     } catch (err) {
       alert("Failed to create event");
     }
@@ -120,6 +124,33 @@ const CalendarPage: React.FC = () => {
       setEvents(data);
     } catch (err) {
       alert("Failed to delete event");
+    }
+  };
+
+  const handleEditEvent = async () => {
+    if (!editingEvent || !editEventData.start_time) {
+      alert("Please fill in all required fields");
+      return;
+    }
+    try {
+      // Delete old event and create a new one with updated data
+      await apiService.deleteEvent(editingEvent.id);
+      await apiService.createEvent({
+        title: editingEvent.title, // Use original title (not editable)
+        type: editingEvent.group_id ? editingEvent.type : editEventData.type, // Use original type if group event
+        start_time: editEventData.start_time,
+        location: editEventData.location,
+        recurrence: editEventData.recurrence,
+        recurrence_count: editEventData.recurrence_count,
+        group_id: editingEvent.group_id
+      });
+      setEditingEvent(null);
+      setEditEventData({ title: '', type: 'General', start_time: '', location: '', recurrence: 'none', recurrence_count: '' });
+      const data = await apiService.getEvents();
+      setEvents(data);
+      alert("Event updated successfully!");
+    } catch (err) {
+      alert("Failed to update event");
     }
   };
 
@@ -141,19 +172,24 @@ const CalendarPage: React.FC = () => {
     }
   };
 
-  const formatShareText = () => {
-    const text = upcomingEvents.map(e => {
+  const formatShareText = (eventIds: string[]) => {
+    const eventsToShare = upcomingEvents.filter(e => eventIds.includes(e.id));
+    const text = eventsToShare.map(e => {
       const date = new Date(e.start_time).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       const loc = e.location ? ` | ${e.location}` : '';
       const group = getGroupName(e.group_id);
       const groupLabel = group ? ` [${group}]` : '';
       return `• ${e.title}${groupLabel} — ${date}${loc}`;
     }).join('\n');
-    return `My Upcoming Schedule:\n\n${text || 'No upcoming events.'}`;
+    return `My Upcoming Schedule:\n\n${text || 'No events selected.'}`;
   };
 
   const handleShareCopy = async () => {
-    const shareText = formatShareText();
+    if (selectedEventsToShare.length === 0) {
+      alert('Please select at least one event to share');
+      return;
+    }
+    const shareText = formatShareText(selectedEventsToShare);
     if (navigator.share) {
       try { await navigator.share({ title: 'My Schedule', text: shareText }); } catch {}
     } else {
@@ -165,12 +201,18 @@ const CalendarPage: React.FC = () => {
       }
     }
     setShowShareMenu(false);
+    setShowEventSelector(false);
+    setSelectedEventsToShare([]);
   };
 
   const handleShareToGroup = async (groupId: string) => {
+    if (selectedEventsToShare.length === 0) {
+      alert('Please select at least one event to share');
+      return;
+    }
     setSharingToGroup(true);
     try {
-      const shareText = formatShareText();
+      const shareText = formatShareText(selectedEventsToShare);
       await apiService.sendMessage(groupId, shareText);
       alert('Schedule shared to group chat!');
     } catch {
@@ -178,7 +220,23 @@ const CalendarPage: React.FC = () => {
     } finally {
       setSharingToGroup(false);
       setShowShareMenu(false);
+      setShowEventSelector(false);
+      setSelectedEventsToShare([]);
     }
+  };
+
+  const handleOpenShareSelector = () => {
+    setShowEventSelector(true);
+    // Select all events by default
+    setSelectedEventsToShare(upcomingEvents.map(e => e.id));
+  };
+
+  const toggleEventSelection = (eventId: string) => {
+    setSelectedEventsToShare(prev =>
+      prev.includes(eventId)
+        ? prev.filter(id => id !== eventId)
+        : [...prev, eventId]
+    );
   };
 
   const handleShareEventToGroup = async (event: any) => {
@@ -274,7 +332,7 @@ const CalendarPage: React.FC = () => {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Upcoming</h2>
             <div className="relative">
-              <button onClick={() => setShowShareMenu(!showShareMenu)} title="Share schedule">
+              <button onClick={handleOpenShareSelector} title="Share schedule">
                 <Share2 size={18} className="text-slate-400 hover:text-orange-500 cursor-pointer transition-colors" />
               </button>
               {showShareMenu && (
@@ -431,6 +489,17 @@ const CalendarPage: React.FC = () => {
                   <option value="monthly">Monthly</option>
                 </select>
               </div>
+              {newEvent.recurrence !== 'none' && (
+                <input
+                  type="number"
+                  placeholder={`How many ${newEvent.recurrence === 'daily' ? 'days' : newEvent.recurrence === 'weekly' ? 'weeks' : 'months'}?`}
+                  className="w-full px-5 py-3 bg-slate-50 border rounded-xl font-bold text-sm"
+                  value={newEvent.recurrence_count}
+                  onChange={e => setNewEvent({...newEvent, recurrence_count: e.target.value})}
+                  min="1"
+                  max="365"
+                />
+              )}
               <button type="submit" className="w-full py-4 bg-orange-500 text-white rounded-xl font-black text-xs uppercase tracking-widest">Create Event</button>
             </form>
           </div>
@@ -499,12 +568,6 @@ const CalendarPage: React.FC = () => {
                 </div>
               )}
               <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setSelectedEvent(null)}
-                  className="flex-1 py-3 border-2 border-slate-100 rounded-xl font-black text-xs uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all"
-                >
-                  Close
-                </button>
                 {selectedEvent.group_id && (
                   <button
                     onClick={() => handleShareEventToGroup(selectedEvent)}
@@ -515,14 +578,260 @@ const CalendarPage: React.FC = () => {
                   </button>
                 )}
                 {canDeleteEvent(selectedEvent) && (
-                  <button
-                    onClick={() => handleDelete(selectedEvent.id)}
-                    className="flex-1 py-3 bg-red-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-600 transition-all"
-                  >
-                    Delete
-                  </button>
+                  <>
+                    <button
+                      onClick={() => {
+                        setEditingEvent(selectedEvent);
+                        setEditEventData({
+                          title: selectedEvent.title,
+                          type: selectedEvent.type || 'General',
+                          start_time: selectedEvent.start_time?.slice(0, 16) || '',
+                          location: selectedEvent.location || '',
+                          recurrence: selectedEvent.recurrence || 'none',
+                          recurrence_count: selectedEvent.recurrence_count || ''
+                        });
+                        setSelectedEvent(null);
+                      }}
+                      className="flex-1 py-3 bg-blue-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-600 transition-all"
+                    >
+                      Reschedule
+                    </button>
+                    <button
+                      onClick={() => handleDelete(selectedEvent.id)}
+                      className="flex-1 py-3 bg-red-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-600 transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Event Modal */}
+      {editingEvent && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-blue-500 p-8 text-white flex justify-between items-center">
+              <h3 className="text-xl font-bold">Edit Event</h3>
+              <button onClick={() => setEditingEvent(null)} className="bg-white/20 hover:bg-white/30 p-2 rounded-xl transition-all">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-8 space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Title</label>
+                <input
+                  type="text"
+                  value={editingEvent.title}
+                  disabled
+                  className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl font-bold text-sm text-slate-500 cursor-not-allowed"
+                />
+                <p className="text-[9px] text-slate-400 ml-2">Title cannot be edited</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Type</label>
+                <select
+                  value={editEventData.type}
+                  onChange={e => setEditEventData({...editEventData, type: e.target.value})}
+                  disabled={!!editingEvent.group_id}
+                  className={`w-full px-4 py-3 border border-slate-200 rounded-xl font-bold text-sm outline-none ${
+                    editingEvent.group_id
+                      ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-50 focus:border-blue-500'
+                  }`}
+                >
+                  <option value="General">General</option>
+                  <option value="Study Session">Study Session</option>
+                  <option value="Group Meeting">Group Meeting</option>
+                  <option value="Exam">Exam</option>
+                  <option value="Assignment">Assignment</option>
+                </select>
+                {editingEvent.group_id && (
+                  <p className="text-[9px] text-slate-400 ml-2">Type cannot be edited for group events</p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Date & Time</label>
+                <input
+                  type="datetime-local"
+                  value={editEventData.start_time}
+                  onChange={e => setEditEventData({...editEventData, start_time: e.target.value})}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
+                <input
+                  type="text"
+                  placeholder="Optional"
+                  value={editEventData.location}
+                  onChange={e => setEditEventData({...editEventData, location: e.target.value})}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Recurrence</label>
+                <select
+                  value={editEventData.recurrence}
+                  onChange={e => setEditEventData({...editEventData, recurrence: e.target.value})}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="none">None</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+              {editEventData.recurrence !== 'none' && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">
+                    How many {editEventData.recurrence === 'daily' ? 'days' : editEventData.recurrence === 'weekly' ? 'weeks' : 'months'}?
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="Count"
+                    value={editEventData.recurrence_count}
+                    onChange={e => setEditEventData({...editEventData, recurrence_count: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500"
+                    min="1"
+                    max="365"
+                  />
+                </div>
+              )}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setEditingEvent(null)}
+                  className="flex-1 py-3 border-2 border-slate-100 rounded-xl font-black text-xs uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleEditEvent}
+                  className="flex-1 py-3 bg-blue-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-600 transition-all"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Event Selector Modal */}
+      {showEventSelector && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-orange-500 p-8 text-white flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-bold">Select Events to Share</h3>
+                <p className="text-xs text-orange-100 mt-1">{selectedEventsToShare.length} event{selectedEventsToShare.length !== 1 ? 's' : ''} selected</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowEventSelector(false);
+                  setSelectedEventsToShare([]);
+                }}
+                className="bg-white/20 hover:bg-white/30 p-2 rounded-xl transition-all"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 max-h-96 overflow-y-auto">
+              {upcomingEvents.length === 0 ? (
+                <p className="text-center text-sm font-bold text-slate-400 py-8">No upcoming events to share</p>
+              ) : (
+                <div className="space-y-2">
+                  {upcomingEvents.map((event) => {
+                    const groupName = getGroupName(event.group_id);
+                    const isSelected = selectedEventsToShare.includes(event.id);
+                    return (
+                      <button
+                        key={event.id}
+                        onClick={() => toggleEventSelection(event.id)}
+                        className={`w-full text-left p-4 rounded-2xl border-2 transition-all ${
+                          isSelected
+                            ? 'bg-orange-50 border-orange-500'
+                            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`mt-1 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${
+                            isSelected ? 'bg-orange-500 border-orange-500' : 'border-slate-300'
+                          }`}>
+                            {isSelected && (
+                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <h4 className="font-bold text-sm text-slate-900">{event.title}</h4>
+                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
+                                event.type === 'Exam' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'
+                              }`}>
+                                {event.type}
+                              </span>
+                              {groupName && (
+                                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-purple-100 text-purple-600">
+                                  {groupName}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <Clock size={12} />
+                              <span className="font-bold">
+                                {new Date(event.start_time).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} at {new Date(event.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            {event.location && (
+                              <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
+                                <MapPin size={12} />
+                                <span className="font-bold">{event.location}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-slate-100 space-y-3">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSelectedEventsToShare(upcomingEvents.map(e => e.id))}
+                  className="flex-1 py-2 text-xs font-black uppercase tracking-widest text-orange-500 hover:bg-orange-50 rounded-xl transition-all"
+                >
+                  Select All
+                </button>
+                <button
+                  onClick={() => setSelectedEventsToShare([])}
+                  className="flex-1 py-2 text-xs font-black uppercase tracking-widest text-slate-400 hover:bg-slate-50 rounded-xl transition-all"
+                >
+                  Clear
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  if (selectedEventsToShare.length > 0) {
+                    setShowEventSelector(false);
+                    setShowShareMenu(true);
+                  } else {
+                    alert('Please select at least one event');
+                  }
+                }}
+                disabled={selectedEventsToShare.length === 0}
+                className="w-full py-4 bg-orange-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <Share2 size={14} />
+                Continue to Share
+              </button>
             </div>
           </div>
         </div>

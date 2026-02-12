@@ -6,7 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class Event extends Model
 {
-    protected $fillable = ['user_id', 'group_id', 'title', 'type', 'start_time', 'location'];
+    protected $fillable = ['user_id', 'group_id', 'title', 'type', 'start_time', 'location', 'recurrence', 'recurrence_count'];
+
+    protected $casts = [
+        'start_time' => 'datetime',
+    ];
 
     public function group() {
         return $this->belongsTo(StudyGroup::class);

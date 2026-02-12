@@ -12,8 +12,7 @@ import {
   Search,
   Bell,
   Menu,
-  X,
-  Plus
+  X
 } from 'lucide-react';
 
 import HomePage from './components/HomePage';
@@ -26,7 +25,9 @@ import SettingsPage from './components/SettingsPage';
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import SignupPage from './components/SignupPage';
+import EmailVerifyPage from './components/EmailVerifyPage';
 import NotificationDropdown from './components/NotificationDropdown';
+import EmailVerificationBanner from './components/EmailVerificationBanner';
 import AdminLogin from './components/admin/AdminLogin';
 import AdminDashboard from './components/admin/AdminDashboard';
 import AdminUsers from './components/admin/AdminUsers';
@@ -63,14 +64,22 @@ const SidebarLink: React.FC<{ to: string; icon: React.ReactNode; label: string }
 
 const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => void; showSearch?: boolean; pageTitle?: string; pageSubtitle?: string }> = ({ children, user, onLogout, showSearch = false, pageTitle, pageSubtitle }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const notifRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const searchQuery = searchParams.get('q') || '';
+
+  // Live search state
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchedUsers, setSearchedUsers] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const handleNotificationClick = (notification: AppNotification) => {
     // Navigate to the relevant group chat for message/group-related notifications
@@ -91,10 +100,64 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
       if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
         setNotifOpen(false);
       }
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSearchDropdown(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Fetch live search results as user types
+  useEffect(() => {
+    const fetchLiveResults = async () => {
+      if (!searchQuery || searchQuery.length < 2) {
+        setSearchResults([]);
+        setSearchedUsers([]);
+        setShowSearchDropdown(false);
+        return;
+      }
+
+      setSearchLoading(true);
+      try {
+        const [groups, users] = await Promise.all([
+          apiService.getGroups(),
+          apiService.searchUsers(searchQuery)
+        ]);
+
+        const filteredGroups = groups.filter(g => {
+          const q = searchQuery.toLowerCase();
+          return (
+            g.name.toLowerCase().includes(q) ||
+            g.subject.toLowerCase().includes(q) ||
+            g.faculty.toLowerCase().includes(q) ||
+            g.description.toLowerCase().includes(q) ||
+            g.creator_name.toLowerCase().includes(q) ||
+            g.location.toLowerCase().includes(q)
+          );
+        }).slice(0, 5); // Show only top 5 results
+
+        const filteredUsers = users.slice(0, 5); // Show only top 5 users
+
+        setSearchResults(filteredGroups);
+        setSearchedUsers(filteredUsers);
+        setShowSearchDropdown(true);
+      } catch (err) {
+        console.error('Search error:', err);
+        setSearchResults([]);
+        setSearchedUsers([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    };
+
+    // Only fetch for live dropdown, not when in full search mode
+    const isInSearchMode = searchParams.get('searchMode') === 'full';
+    if (!isInSearchMode) {
+      const debounce = setTimeout(fetchLiveResults, 300);
+      return () => clearTimeout(debounce);
+    }
+  }, [searchQuery, searchParams]);
 
   const fetchNotifications = async () => {
     try {
@@ -130,13 +193,48 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     const currentParams = Object.fromEntries(searchParams.entries());
-    
+
     if (val) {
-      setSearchParams({ ...currentParams, q: val });
+      // Remove searchMode when typing (back to live dropdown)
+      const { searchMode, ...rest } = currentParams;
+      setSearchParams({ ...rest, q: val });
     } else {
-      const { q, ...rest } = currentParams;
+      const { q, searchMode, ...rest } = currentParams;
       setSearchParams(rest);
+      setShowSearchDropdown(false);
     }
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && searchQuery) {
+      // Enter key: trigger full search mode
+      const currentParams = Object.fromEntries(searchParams.entries());
+      setSearchParams({ ...currentParams, searchMode: 'full' });
+      setShowSearchDropdown(false);
+
+      // Navigate to home page if not already there
+      if (location.pathname !== '/home') {
+        navigate(`/home?q=${encodeURIComponent(searchQuery)}&searchMode=full`);
+      }
+    }
+  };
+
+  const handleResultClick = (group: any) => {
+    setShowSearchDropdown(false);
+
+    // Search for the clicked group and enter full search mode
+    const searchTerm = group.name;
+    setSearchParams({ q: searchTerm, searchMode: 'full' });
+
+    // Navigate to home page if not already there
+    if (location.pathname !== '/home') {
+      navigate(`/home?q=${encodeURIComponent(searchTerm)}&searchMode=full`);
+    }
+  };
+
+  const handleUserClick = (user: any) => {
+    setShowSearchDropdown(false);
+    navigate(`/profile/${user.id}`);
   };
 
   return (
@@ -192,15 +290,99 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
               <Menu className="w-6 h-6 text-slate-600" />
             </button>
             {showSearch && (
-              <div className="hidden sm:flex items-center bg-slate-100 px-4 py-2 rounded-xl w-full max-w-md border border-slate-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all">
-                <Search className={`w-5 h-5 transition-colors ${searchQuery ? 'text-orange-500' : 'text-slate-400'}`} />
-                <input
-                  type="text"
-                  placeholder="Search groups, subjects, faculty..."
-                  className="bg-transparent border-none outline-none ml-3 w-full text-slate-600 placeholder:text-slate-400 font-medium"
-                  value={searchQuery}
-                  onChange={handleSearchChange}
-                />
+              <div className="relative w-full max-w-md" ref={searchRef}>
+                <div className="flex items-center bg-slate-100 px-4 py-2 rounded-xl w-full border border-slate-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all">
+                  <Search className={`w-5 h-5 transition-colors ${searchQuery ? 'text-orange-500' : 'text-slate-400'}`} />
+                  <input
+                    type="text"
+                    placeholder="Search groups, subjects, faculty..."
+                    className="bg-transparent border-none outline-none ml-3 w-full text-slate-600 placeholder:text-slate-400 font-medium"
+                    value={searchQuery}
+                    onChange={handleSearchChange}
+                    onKeyDown={handleSearchKeyDown}
+                  />
+                </div>
+
+                {/* Live Search Dropdown */}
+                {showSearchDropdown && searchQuery && location.pathname !== '/groups' && (
+                  <div className="absolute top-full mt-2 w-full bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="p-3 border-b border-slate-100">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Quick Results
+                      </p>
+                    </div>
+
+                    {searchLoading ? (
+                      <div className="p-8 text-center">
+                        <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                      </div>
+                    ) : (searchResults.length > 0 || searchedUsers.length > 0) ? (
+                      <div className="max-h-80 overflow-y-auto">
+                        {/* Groups Section */}
+                        {searchResults.length > 0 && (
+                          <div>
+                            <div className="px-4 py-2 bg-slate-50/50">
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Groups</p>
+                            </div>
+                            {searchResults.map((group) => (
+                              <button
+                                key={group.id}
+                                onClick={() => handleResultClick(group)}
+                                className="w-full px-4 py-3 hover:bg-slate-50 transition-colors text-left border-b border-slate-50"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-sm shrink-0">
+                                    {group.name[0]}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="font-bold text-slate-900 truncate text-sm">{group.name}</h4>
+                                    <p className="text-xs text-slate-500 truncate">{group.subject} • {group.faculty}</p>
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Users Section */}
+                        {searchedUsers.length > 0 && (
+                          <div>
+                            <div className="px-4 py-2 bg-slate-50/50">
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Users</p>
+                            </div>
+                            {searchedUsers.map((user) => (
+                              <button
+                                key={user.id}
+                                onClick={() => handleUserClick(user)}
+                                className="w-full px-4 py-3 hover:bg-slate-50 transition-colors text-left border-b border-slate-50 last:border-b-0"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center font-bold text-sm shrink-0">
+                                    {user.name[0]}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="font-bold text-slate-900 truncate text-sm">{user.name}</h4>
+                                    <p className="text-xs text-slate-500 truncate">{user.major || 'Student'}</p>
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-6 text-center">
+                        <p className="text-sm text-slate-400">No results found</p>
+                      </div>
+                    )}
+
+                    <div className="p-3 bg-slate-50 border-t border-slate-100">
+                      <p className="text-xs text-slate-500 text-center">
+                        Press <kbd className="px-2 py-1 bg-white border border-slate-200 rounded text-xs font-bold">Enter</kbd> to see all results
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {pageTitle && (
@@ -246,6 +428,8 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
             </Link>
           </div>
         </header>
+
+        <EmailVerificationBanner />
 
         <div className="flex-1 overflow-y-auto p-6 md:p-8">
           {children}
@@ -300,7 +484,8 @@ const App: React.FC = () => {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={user ? <Navigate to="/home" /> : <LoginPage onLogin={handleLogin} />} />
         <Route path="/signup" element={user ? <Navigate to="/home" /> : <SignupPage onSignup={handleLogin} />} />
-        
+        <Route path="/email/verify/:id/:hash" element={<EmailVerifyPage />} />
+
         <Route path="/home" element={
           user ? <Layout user={user} onLogout={handleLogout} showSearch={true}><HomePage /></Layout> : <Navigate to="/login" />
         } />

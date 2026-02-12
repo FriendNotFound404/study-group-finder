@@ -1,10 +1,12 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Users, MapPin, Sparkles, Loader2, X, AlertCircle, Search, Eraser, Filter, ChevronDown, Lock, Archive, Unlock, TrendingUp, BookOpen, Trophy, Flame, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { Plus, Users, MapPin, Sparkles, Loader2, X, AlertCircle, Search, Eraser, Filter, ChevronDown, Lock, Archive, Unlock, TrendingUp, Trophy, Flame, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { StudyGroup, User, GroupStatus } from '../types';
 import { geminiService } from '../services/geminiService';
 import { apiService } from '../services/apiService';
+import GroupDetailModal from './GroupDetailModal';
+import StarRating from './StarRating';
 
 const HomePage: React.FC = () => {
   // All groups state
@@ -12,7 +14,6 @@ const HomePage: React.FC = () => {
 
   // Discover data state
   const [trendingGroups, setTrendingGroups] = useState<StudyGroup[]>([]);
-  const [discoverSubjects, setDiscoverSubjects] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [searchedUsers, setSearchedUsers] = useState<any[]>([]);
 
@@ -27,9 +28,13 @@ const HomePage: React.FC = () => {
   const [locationFilter, setLocationFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [contentFilter, setContentFilter] = useState<'all' | 'groups' | 'users'>('all');
+  const [ratingFilter, setRatingFilter] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
+  const [leaderFilter, setLeaderFilter] = useState('');
 
   const [searchParams, setSearchParams] = useSearchParams();
   const searchQuery = searchParams.get('q') || '';
+  const isFullSearchMode = searchParams.get('searchMode') === 'full';
 
   const [currentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('auth_user');
@@ -56,6 +61,9 @@ const HomePage: React.FC = () => {
     faculty: ''
   });
   const [editSaving, setEditSaving] = useState(false);
+
+  // Group detail modal state
+  const [selectedGroupForDetail, setSelectedGroupForDetail] = useState<StudyGroup | null>(null);
 
   // Scroll refs for horizontal sections
   const joinedScrollRef = useRef<HTMLDivElement>(null);
@@ -87,15 +95,13 @@ const HomePage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [allGroups, trending, subjects, leaders] = await Promise.all([
+      const [allGroups, trending, leaders] = await Promise.all([
         apiService.getGroups(),
         apiService.getTrendingGroups(),
-        apiService.getSubjects(),
         apiService.getLeaders()
       ]);
       setGroups(allGroups);
       setTrendingGroups(trending);
-      setDiscoverSubjects(subjects);
       setLeaderboard(leaders);
     } catch (err: any) {
       console.error("Failed to load data:", err);
@@ -108,20 +114,33 @@ const HomePage: React.FC = () => {
   const faculties = useMemo(() => Array.from(new Set(groups.map(g => g.faculty))).sort(), [groups]);
   const subjects = useMemo(() => Array.from(new Set(groups.map(g => g.subject))).sort(), [groups]);
   const locations = useMemo(() => Array.from(new Set(groups.map(g => g.location))).sort(), [groups]);
+  const leaders = useMemo(() => Array.from(new Set(groups.map(g => g.creator_name))).sort(), [groups]);
 
-  // Separate groups by user relationship
+  // Separate groups by user relationship (excluding archived)
   const joinedGroups = useMemo(() =>
-    groups.filter(g => g.is_member && g.creator_id !== currentUser?.id),
+    groups.filter(g => g.is_member && g.creator_id !== currentUser?.id && g.status !== GroupStatus.ARCHIVED),
     [groups, currentUser]
   );
 
   const createdGroups = useMemo(() =>
-    groups.filter(g => g.creator_id === currentUser?.id),
+    groups.filter(g => g.creator_id === currentUser?.id && g.status !== GroupStatus.ARCHIVED),
     [groups, currentUser]
+  );
+
+  // Recent groups - always show 5 most recently created groups (not affected by search/filters)
+  const recentGroups = useMemo(() =>
+    groups
+      .filter(g => g.status !== GroupStatus.ARCHIVED)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 5),
+    [groups]
   );
 
   const filteredGroups = useMemo(() => {
     const results = groups.filter(g => {
+      // Exclude archived groups from main view
+      if (g.status === GroupStatus.ARCHIVED) return false;
+
       const q = searchQuery.toLowerCase();
       const matchesSearch = !q || (
         g.name.toLowerCase().includes(q) ||
@@ -137,16 +156,37 @@ const HomePage: React.FC = () => {
       const matchesLocation = !locationFilter || g.location === locationFilter;
       const matchesStatus = !statusFilter || g.status === statusFilter;
 
-      return matchesSearch && matchesFaculty && matchesSubject && matchesLocation && matchesStatus;
+      // Rating filter: filter by minimum average group rating
+      const matchesRating = !ratingFilter || (g.avg_group_rating && g.avg_group_rating >= parseFloat(ratingFilter));
+
+      // Date filter: filter by creation date
+      let matchesDate = true;
+      if (dateFilter) {
+        const now = new Date();
+        const createdDate = new Date(g.created_at);
+        const daysDiff = Math.floor((now.getTime() - createdDate.getTime()) / (1000 * 60 * 60 * 24));
+
+        if (dateFilter === '7days') matchesDate = daysDiff <= 7;
+        else if (dateFilter === '30days') matchesDate = daysDiff <= 30;
+        else if (dateFilter === '90days') matchesDate = daysDiff <= 90;
+      }
+
+      // Leader filter: filter by group creator
+      const matchesLeader = !leaderFilter || g.creator_name === leaderFilter;
+
+      return matchesSearch && matchesFaculty && matchesSubject && matchesLocation && matchesStatus && matchesRating && matchesDate && matchesLeader;
     });
 
+    // Sort by creation date (most recent first) for "Recent Groups" view
+    // When in search/filter mode, also sort by relevance (members count)
+    const hasActiveFilters = searchQuery || facultyFilter || subjectFilter || locationFilter || statusFilter || ratingFilter || dateFilter || leaderFilter;
     return results.sort((a, b) => {
-      if (b.members_count !== a.members_count) {
+      if (hasActiveFilters && b.members_count !== a.members_count) {
         return b.members_count - a.members_count;
       }
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
-  }, [groups, searchQuery, facultyFilter, subjectFilter, locationFilter, statusFilter]);
+  }, [groups, searchQuery, facultyFilter, subjectFilter, locationFilter, statusFilter, ratingFilter, dateFilter, leaderFilter]);
 
   const handleJoinLeave = async (id: string, currentlyMember: boolean, hasPendingRequest: boolean, groupStatus: GroupStatus) => {
     try {
@@ -170,6 +210,29 @@ const HomePage: React.FC = () => {
     } catch (err: any) {
       alert(err.message || "Action failed.");
     }
+  };
+
+  // Handler for group detail modal actions
+  const handleJoinFromModal = async (groupId: string) => {
+    const group = groups.find(g => g.id === groupId);
+    if (!group) throw new Error('Group not found');
+
+    const response = await apiService.joinGroup(groupId);
+    if (group.status === GroupStatus.OPEN) {
+      alert('Successfully joined the group!');
+    } else {
+      alert('Join request sent! You will be notified when the leader reviews your request.');
+    }
+  };
+
+  const handleLeaveFromModal = async (groupId: string) => {
+    await apiService.leaveGroup(groupId);
+    alert('You have left the group.');
+  };
+
+  const handleDeleteFromModal = async (groupId: string) => {
+    await apiService.deleteGroup(groupId);
+    alert('Group deleted successfully.');
   };
 
   const getStatusBadge = (status: GroupStatus) => {
@@ -217,6 +280,9 @@ const HomePage: React.FC = () => {
     setLocationFilter('');
     setStatusFilter('');
     setContentFilter('all');
+    setRatingFilter('');
+    setDateFilter('');
+    setLeaderFilter('');
   };
 
   const openEditModal = (group: StudyGroup) => {
@@ -262,7 +328,10 @@ const HomePage: React.FC = () => {
     locationFilter,
     statusFilter,
     searchQuery,
-    contentFilter !== 'all' ? 'content' : ''
+    contentFilter !== 'all' ? 'content' : '',
+    ratingFilter,
+    dateFilter,
+    leaderFilter
   ].filter(Boolean).length;
 
   // Render horizontal group card (for joined/created sections)
@@ -272,7 +341,7 @@ const HomePage: React.FC = () => {
     return (
       <div
         key={group.id}
-        className="flex-shrink-0 w-80 bg-white border border-slate-200 rounded-2xl p-6 hover:shadow-lg hover:border-orange-200 transition-all"
+        className="flex-shrink-0 w-96 bg-white border border-slate-200 rounded-2xl p-6 hover:shadow-lg hover:border-orange-200 transition-all"
       >
         <div className="flex items-center gap-3 mb-4">
           <Link
@@ -282,10 +351,20 @@ const HomePage: React.FC = () => {
             {group.creator_name[0]}
           </Link>
           <div className="flex-1 min-w-0">
-            <Link to={`/groups?group=${group.id}`} className="block group/title">
-              <h3 className="font-bold text-slate-900 truncate group-hover/title:text-orange-500 transition-colors">{group.name}</h3>
-            </Link>
+            <button
+              onClick={() => setSelectedGroupForDetail(group)}
+              className="block group/title text-left w-full"
+            >
+              <h3 className="font-bold text-slate-900 line-clamp-2 group-hover/title:text-orange-500 transition-colors cursor-pointer">{group.name}</h3>
+            </button>
             <p className="text-xs font-semibold text-slate-400">{group.subject}</p>
+            <p className="text-[10px] font-semibold text-slate-500">Led by {group.creator_name}</p>
+            {group.total_ratings && group.total_ratings > 0 && (
+              <div className="flex items-center gap-2 mt-1">
+                <StarRating value={group.avg_group_rating || 0} readonly size="sm" />
+                <span className="text-[10px] text-slate-400 font-bold">({group.total_ratings})</span>
+              </div>
+            )}
           </div>
           {getStatusBadge(group.status)}
         </div>
@@ -330,21 +409,209 @@ const HomePage: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">StudyHub</h1>
+          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
+            {isFullSearchMode ? 'Search Results' : 'StudyHub'}
+          </h1>
           <p className="text-slate-500 font-medium">
             {searchQuery
               ? `Showing results for "${searchQuery}"`
               : "Your complete study companion"}
           </p>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-orange-200 transition-all hover:-translate-y-0.5"
-        >
-          <Plus size={20} />
-          <span>Create Group</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {isFullSearchMode && (
+            <button
+              onClick={() => {
+                const { searchMode, ...rest } = Object.fromEntries(searchParams.entries());
+                setSearchParams(rest);
+              }}
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl font-bold transition-all bg-slate-100 text-slate-600 hover:bg-slate-200"
+            >
+              <X size={18} />
+              <span>Exit Search</span>
+            </button>
+          )}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold transition-all border ${
+              activeFilterCount > 0 || showFilters
+                ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Filter size={18} />
+            <span>Filters</span>
+            {activeFilterCount > 0 && (
+              <span className="ml-1 w-5 h-5 bg-orange-500 text-white rounded-full flex items-center justify-center text-[10px] font-black">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-orange-200 transition-all hover:-translate-y-0.5"
+          >
+            <Plus size={20} />
+            <span>Create Group</span>
+          </button>
+        </div>
       </div>
+
+      {/* Filters Panel */}
+      {showFilters && (
+        <div className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-xl shadow-slate-200/50 space-y-6 animate-in slide-in-from-top-4 duration-300">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Content Type</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={contentFilter}
+                  onChange={e => setContentFilter(e.target.value as 'all' | 'groups' | 'users')}
+                >
+                  <option value="all">All</option>
+                  <option value="groups">Groups Only</option>
+                  <option value="users">Users Only</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Faculty</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={facultyFilter}
+                  onChange={e => setFacultyFilter(e.target.value)}
+                >
+                  <option value="">All Faculties</option>
+                  {faculties.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Subject</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={subjectFilter}
+                  onChange={e => setSubjectFilter(e.target.value)}
+                >
+                  <option value="">All Subjects</option>
+                  {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={locationFilter}
+                  onChange={e => setLocationFilter(e.target.value)}
+                >
+                  <option value="">Any Location</option>
+                  {locations.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Status</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                >
+                  <option value="">All Statuses</option>
+                  <option value={GroupStatus.OPEN}>Open</option>
+                  <option value={GroupStatus.CLOSED}>Closed</option>
+                  <option value={GroupStatus.ARCHIVED}>Archived</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Min Rating</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={ratingFilter}
+                  onChange={e => setRatingFilter(e.target.value)}
+                >
+                  <option value="">All Ratings</option>
+                  <option value="4">4+ Stars</option>
+                  <option value="3">3+ Stars</option>
+                  <option value="2">2+ Stars</option>
+                  <option value="1">1+ Stars</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Created</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={dateFilter}
+                  onChange={e => setDateFilter(e.target.value)}
+                >
+                  <option value="">All Time</option>
+                  <option value="7days">Last 7 Days</option>
+                  <option value="30days">Last 30 Days</option>
+                  <option value="90days">Last 90 Days</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Leader</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
+                  value={leaderFilter}
+                  onChange={e => setLeaderFilter(e.target.value)}
+                >
+                  <option value="">All Leaders</option>
+                  {leaders.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center pt-2">
+            <button
+              onClick={clearAllFilters}
+              className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-orange-500 transition-colors flex items-center gap-1.5"
+            >
+              <Eraser size={14} />
+              Reset All Filters
+            </button>
+            <button
+              onClick={() => {
+                const currentParams = Object.fromEntries(searchParams.entries());
+                setSearchParams({ ...currentParams, searchMode: 'full' });
+                setShowFilters(false);
+              }}
+              className="px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest shadow-lg shadow-orange-200 transition-all flex items-center gap-2"
+            >
+              <Search size={14} />
+              Search
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-amber-50 border border-amber-200 p-6 rounded-[2rem] flex items-start gap-4 text-amber-800">
@@ -364,8 +631,11 @@ const HomePage: React.FC = () => {
         </div>
       ) : (
         <>
-          {/* Joined Groups Section */}
-          {joinedGroups.length > 0 && (
+          {/* Hide all sections except search results when in full search mode */}
+          {!isFullSearchMode && (
+            <>
+              {/* Joined Groups Section */}
+              {joinedGroups.length > 0 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -465,10 +735,20 @@ const HomePage: React.FC = () => {
                         </div>
                         {getStatusBadge(group.status)}
                       </div>
-                      <Link to={`/groups?group=${group.id}`} className="block group/title">
-                        <h3 className="text-lg font-bold text-slate-900 mb-1 group-hover/title:text-orange-500 transition-colors">{group.name}</h3>
-                      </Link>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">{group.subject}</p>
+                      <button
+                        onClick={() => setSelectedGroupForDetail(group)}
+                        className="block group/title text-left w-full"
+                      >
+                        <h3 className="text-lg font-bold text-slate-900 mb-1 group-hover/title:text-orange-500 transition-colors cursor-pointer">{group.name}</h3>
+                      </button>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{group.subject}</p>
+                      <p className="text-xs font-semibold text-slate-500 mb-3">Led by {group.creator_name}</p>
+                      {group.total_ratings && group.total_ratings > 0 && (
+                        <div className="flex items-center gap-2 mb-3">
+                          <StarRating value={group.avg_group_rating || 0} readonly size="sm" />
+                          <span className="text-[10px] text-slate-400 font-bold">({group.total_ratings})</span>
+                        </div>
+                      )}
                       <div className="flex items-center gap-2 mb-4">
                         <Users size={14} className="text-slate-300" />
                         <span className="text-xs font-bold text-slate-500">{group.members_count} students enrolled</span>
@@ -507,185 +787,29 @@ const HomePage: React.FC = () => {
             </div>
           )}
 
-          {/* Subjects Section */}
-          {discoverSubjects.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <BookOpen className="text-orange-500" size={24} />
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">Popular Subjects</h2>
-                  <p className="text-sm text-slate-500">Explore study groups by subject</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {discoverSubjects.slice(0, 12).map((subj, idx) => (
-                  <div
-                    key={idx}
-                    onClick={() => {
-                      // Toggle filter: if same subject is clicked, clear it
-                      if (subjectFilter === subj.subject) {
-                        setSubjectFilter('');
-                      } else {
-                        setSubjectFilter(subj.subject);
-                        // Scroll to the all groups section
-                        setTimeout(() => {
-                          const allGroupsSection = document.querySelector('[data-section="all-groups"]');
-                          if (allGroupsSection) {
-                            allGroupsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                          }
-                        }, 100);
-                      }
-                    }}
-                    className={`bg-white p-6 rounded-2xl border text-center transition-all cursor-pointer group shadow-sm ${
-                      subjectFilter === subj.subject
-                        ? 'border-orange-500 bg-orange-50 shadow-md'
-                        : 'border-slate-200 hover:border-orange-500'
-                    }`}
-                  >
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-all ${
-                      subjectFilter === subj.subject
-                        ? 'bg-orange-100'
-                        : 'bg-slate-50 group-hover:bg-orange-50'
-                    }`}>
-                      <BookOpen className="text-orange-500" size={20} />
-                    </div>
-                    <h3 className="font-bold text-slate-900 mb-1 text-sm">{subj.subject}</h3>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{subj.count} Groups</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            </>
           )}
 
-          {/* All Groups & Users Section */}
+          {/* All Groups & Users Section - Always shown in search mode */}
           <div className="space-y-4" data-section="all-groups">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <TrendingUp className="text-orange-500" size={24} />
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">
-                    All Study Groups
-                    {subjectFilter && (
-                      <span className="ml-2 text-sm font-normal text-orange-500">
-                        (Filtered by: {subjectFilter})
-                      </span>
-                    )}
-                  </h2>
-                  <p className="text-sm text-slate-500">Browse all available study sessions</p>
-                </div>
+            <div className="flex items-center gap-3">
+              <TrendingUp className="text-orange-500" size={24} />
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">
+                  {isFullSearchMode ? `Search Results (${filteredGroups.length})` : 'Recent Groups'}
+                  {subjectFilter && !isFullSearchMode && (
+                    <span className="ml-2 text-sm font-normal text-orange-500">
+                      (Filtered by: {subjectFilter})
+                    </span>
+                  )}
+                </h2>
+                <p className="text-sm text-slate-500">
+                  {isFullSearchMode
+                    ? `Groups and users matching "${searchQuery}"`
+                    : 'Recently created study sessions'}
+                </p>
               </div>
-              <button
-                onClick={() => setShowFilters(!showFilters)}
-                className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold transition-all border ${
-                  activeFilterCount > 0 || showFilters
-                    ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm'
-                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <Filter size={18} />
-                <span>Filters</span>
-                {activeFilterCount > 0 && (
-                  <span className="ml-1 w-5 h-5 bg-orange-500 text-white rounded-full flex items-center justify-center text-[10px] font-black">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </button>
             </div>
-
-            {/* Filters Panel */}
-            {showFilters && (
-              <div className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-xl shadow-slate-200/50 space-y-6 animate-in slide-in-from-top-4 duration-300">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Content Type</label>
-                    <div className="relative">
-                      <select
-                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                        value={contentFilter}
-                        onChange={e => setContentFilter(e.target.value as 'all' | 'groups' | 'users')}
-                      >
-                        <option value="all">All</option>
-                        <option value="groups">Groups Only</option>
-                        <option value="users">Users Only</option>
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Faculty</label>
-                    <div className="relative">
-                      <select
-                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                        value={facultyFilter}
-                        onChange={e => setFacultyFilter(e.target.value)}
-                      >
-                        <option value="">All Faculties</option>
-                        {faculties.map(f => <option key={f} value={f}>{f}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Subject</label>
-                    <div className="relative">
-                      <select
-                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                        value={subjectFilter}
-                        onChange={e => setSubjectFilter(e.target.value)}
-                      >
-                        <option value="">All Subjects</option>
-                        {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
-                    <div className="relative">
-                      <select
-                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                        value={locationFilter}
-                        onChange={e => setLocationFilter(e.target.value)}
-                      >
-                        <option value="">Any Location</option>
-                        {locations.map(l => <option key={l} value={l}>{l}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Status</label>
-                    <div className="relative">
-                      <select
-                        className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                        value={statusFilter}
-                        onChange={e => setStatusFilter(e.target.value)}
-                      >
-                        <option value="">All Statuses</option>
-                        <option value={GroupStatus.OPEN}>Open</option>
-                        <option value={GroupStatus.CLOSED}>Closed</option>
-                        <option value={GroupStatus.ARCHIVED}>Archived</option>
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    onClick={clearAllFilters}
-                    className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-orange-500 transition-colors flex items-center gap-1.5"
-                  >
-                    <Eraser size={14} />
-                    Reset All Filters
-                  </button>
-                </div>
-              </div>
-            )}
 
             {/* User Results Section */}
             {searchQuery && searchedUsers.length > 0 && (contentFilter === 'all' || contentFilter === 'users') && (
@@ -731,9 +855,9 @@ const HomePage: React.FC = () => {
             {/* Groups Results */}
             {(contentFilter === 'all' || contentFilter === 'groups') && (
               <div className="grid gap-6">
-                {filteredGroups.length === 0 && !error && (
+                {(isFullSearchMode ? filteredGroups.length === 0 : recentGroups.length === 0) && !error && (
                 <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] p-16 text-center">
-                  {activeFilterCount > 0 ? (
+                  {isFullSearchMode ? (
                     <>
                       <Search size={48} className="mx-auto mb-4 text-slate-200" />
                       <p className="font-bold text-slate-400 mb-4">No groups match your current criteria.</p>
@@ -755,7 +879,7 @@ const HomePage: React.FC = () => {
                 </div>
               )}
 
-                {filteredGroups.map(group => {
+                {(isFullSearchMode ? filteredGroups : recentGroups).map(group => {
                 const isFull = group.members_count >= group.max_members;
                 const isClosed = group.status === GroupStatus.CLOSED;
                 const isArchived = group.status === GroupStatus.ARCHIVED;
@@ -790,9 +914,12 @@ const HomePage: React.FC = () => {
                     </div>
 
                     <div className="mb-8">
-                      <Link to={`/groups?group=${group.id}`} className="block group/title inline-block">
-                        <h2 className="text-2xl font-black text-slate-900 mb-3 tracking-tight group-hover/title:text-orange-500 transition-colors">{group.name}</h2>
-                      </Link>
+                      <button
+                        onClick={() => setSelectedGroupForDetail(group)}
+                        className="block group/title inline-block text-left"
+                      >
+                        <h2 className="text-2xl font-black text-slate-900 mb-3 tracking-tight group-hover/title:text-orange-500 transition-colors cursor-pointer">{group.name}</h2>
+                      </button>
                       <p className="text-slate-500 leading-relaxed font-medium line-clamp-2">{group.description}</p>
                     </div>
 
@@ -809,6 +936,28 @@ const HomePage: React.FC = () => {
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">Faculty</p>
                         <p className="text-sm font-bold text-slate-700 truncate">{group.faculty}</p>
                       </div>
+                      {group.total_ratings && group.total_ratings > 0 && (
+                        <>
+                          <div className="space-y-1">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Group Rating</p>
+                            <div className="flex items-center gap-2">
+                              <StarRating value={group.avg_group_rating || 0} readonly size="sm" />
+                              <span className="text-xs font-bold text-slate-500">({group.avg_group_rating?.toFixed(1)})</span>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Leader Rating</p>
+                            <div className="flex items-center gap-2">
+                              <StarRating value={group.avg_leader_rating || 0} readonly size="sm" />
+                              <span className="text-xs font-bold text-slate-500">({group.avg_leader_rating?.toFixed(1)})</span>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total Ratings</p>
+                            <p className="text-sm font-bold text-slate-700">{group.total_ratings} rating{group.total_ratings !== 1 ? 's' : ''}</p>
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -849,7 +998,7 @@ const HomePage: React.FC = () => {
           </div>
 
           {/* Leaders Leaderboard Section */}
-          {leaderboard.length > 0 && (
+          {!isFullSearchMode && leaderboard.length > 0 && (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <Trophy className="text-orange-500" size={24} />
@@ -1125,6 +1274,19 @@ const HomePage: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Group Detail Modal */}
+      {selectedGroupForDetail && (
+        <GroupDetailModal
+          group={selectedGroupForDetail}
+          currentUser={currentUser}
+          onClose={() => setSelectedGroupForDetail(null)}
+          onJoin={handleJoinFromModal}
+          onLeave={handleLeaveFromModal}
+          onDelete={handleDeleteFromModal}
+          onRefresh={loadAllData}
+        />
       )}
     </div>
   );

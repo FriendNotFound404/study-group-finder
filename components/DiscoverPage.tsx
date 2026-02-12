@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Flame, Users, Trophy, BookOpen, Loader2, Search, User as UserIcon } from 'lucide-react';
+import { TrendingUp, Flame, Users, Trophy, BookOpen, Loader2, Search, User as UserIcon, Star } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { apiService } from '../services/apiService';
 import { StudyGroup } from '../types';
+import StarRating from './StarRating';
 
 const DiscoverPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'trending' | 'subjects' | 'users'>('trending');
@@ -131,7 +132,14 @@ const DiscoverPage: React.FC = () => {
                     <span className="text-emerald-500 text-xs font-black bg-emerald-50 px-2 py-1 rounded-lg uppercase tracking-wider">Active</span>
                   </div>
                   <h3 className="text-lg font-bold text-slate-900 mb-1">{group.name}</h3>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">{group.subject}</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{group.subject}</p>
+                  <p className="text-xs font-semibold text-slate-500 mb-3">Led by {group.creator_name}</p>
+                  {group.total_ratings && group.total_ratings > 0 && (
+                    <div className="flex items-center gap-2 mb-3">
+                      <StarRating value={group.avg_group_rating || 0} readonly size="sm" />
+                      <span className="text-[10px] text-slate-400 font-bold">({group.total_ratings})</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Users size={14} className="text-slate-300" />
                     <span className="text-xs font-bold text-slate-500">{group.members_count} students enrolled</span>

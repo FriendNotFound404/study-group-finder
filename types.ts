@@ -35,6 +35,20 @@ export interface StudyGroup {
   is_member?: boolean;
   has_pending_request?: boolean;
   pending_requests_count?: number;
+  avg_group_rating?: number;
+  avg_leader_rating?: number;
+  total_ratings?: number;
+}
+
+export interface Rating {
+  id: string;
+  user_id: string;
+  group_id: string;
+  group_rating: number;
+  leader_rating: number;
+  update_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Message {
@@ -60,6 +74,9 @@ export interface Report {
   description: string;
   reporter_name: string;
   created_at: string;
+  text?: string;
+  group_name?: string;
+  rating?: number;
 }
 
 // Backend feedback format (used for reports)
@@ -86,7 +103,7 @@ export interface Event {
 export interface AppNotification {
   id: number;
   user_id: number;
-  type: 'message' | 'group_join' | 'event' | 'join_request' | 'join_approved' | 'join_rejected' | 'removed_from_group';
+  type: 'message' | 'group_join' | 'event' | 'join_request' | 'join_approved' | 'join_rejected' | 'removed_from_group' | 'user_warned' | 'user_banned' | 'report_submitted';
   data: {
     user_id?: number;
     user_name?: string;

@@ -4,8 +4,11 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Mail\EmailVerificationMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -27,9 +30,13 @@ class AuthController extends Controller
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
+        // Send verification email
+        $this->sendVerificationEmail($user);
+
         return response()->json([
             'user' => $user,
             'token' => $token,
+            'message' => 'Registration successful. Please check your email to verify your account.',
         ], 201);
     }
 
@@ -67,5 +74,102 @@ class AuthController extends Controller
     {
         $request->user()->currentAccessToken()->delete();
         return response()->json(['message' => 'Logged out']);
+    }
+
+    /**
+     * Send verification email to user
+     */
+    private function sendVerificationEmail($user)
+    {
+        $verificationUrl = $this->generateVerificationUrl($user);
+
+        try {
+            Mail::to($user->email)->send(new EmailVerificationMail($user->name, $verificationUrl));
+        } catch (\Exception $e) {
+            \Log::error('Failed to send verification email: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Generate signed verification URL
+     */
+    private function generateVerificationUrl($user)
+    {
+        return URL::temporarySignedRoute(
+            'verification.verify',
+            now()->addMinutes(60),
+            ['id' => $user->id, 'hash' => sha1($user->email)]
+        );
+    }
+
+    /**
+     * Verify user's email
+     */
+    public function verifyEmail(Request $request, $id)
+    {
+        $user = User::findOrFail($id);
+
+        // Check if URL signature is valid
+        if (!$request->hasValidSignature()) {
+            return response()->json([
+                'message' => 'Invalid or expired verification link.'
+            ], 400);
+        }
+
+        // Check if email hash matches
+        if (sha1($user->email) !== $request->hash) {
+            return response()->json([
+                'message' => 'Invalid verification link.'
+            ], 400);
+        }
+
+        // Check if already verified
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified.',
+                'verified' => true
+            ], 200);
+        }
+
+        // Mark email as verified
+        $user->markEmailAsVerified();
+
+        return response()->json([
+            'message' => 'Email verified successfully!',
+            'verified' => true
+        ], 200);
+    }
+
+    /**
+     * Resend verification email
+     */
+    public function resendVerification(Request $request)
+    {
+        $user = $request->user();
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified.'
+            ], 400);
+        }
+
+        $this->sendVerificationEmail($user);
+
+        return response()->json([
+            'message' => 'Verification email sent successfully.'
+        ], 200);
+    }
+
+    /**
+     * Check verification status
+     */
+    public function checkVerificationStatus(Request $request)
+    {
+        $user = $request->user();
+
+        return response()->json([
+            'verified' => $user->hasVerifiedEmail(),
+            'email' => $user->email
+        ]);
     }
 }

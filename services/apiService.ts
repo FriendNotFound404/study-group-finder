@@ -1,5 +1,5 @@
 
-import { StudyGroup, Message, Feedback, User, AppNotification, PendingJoinRequest, GroupMember } from '../types';
+import { StudyGroup, Message, Feedback, User, AppNotification, PendingJoinRequest, GroupMember, Rating } from '../types';
 import { API_CONFIG } from '../constants';
 
 const BASE_URL = API_CONFIG.BASE_URL;
@@ -43,11 +43,26 @@ export const apiService = {
     return handleResponse(res);
   },
 
-  async register(data: any): Promise<{user: User, token: string}> {
+  async register(data: any): Promise<{user: User, token: string, message?: string}> {
     const res = await fetch(`${BASE_URL}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify(data)
+    });
+    return handleResponse(res);
+  },
+
+  async resendVerification(): Promise<{message: string}> {
+    const res = await fetch(`${BASE_URL}/email/resend`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    return handleResponse(res);
+  },
+
+  async checkVerificationStatus(): Promise<{verified: boolean, email: string}> {
+    const res = await fetch(`${BASE_URL}/email/verification-status`, {
+      headers: getHeaders()
     });
     return handleResponse(res);
   },
@@ -74,6 +89,14 @@ export const apiService = {
       body: JSON.stringify(data)
     });
     return handleResponse(res);
+  },
+
+  async deleteGroup(id: string): Promise<void> {
+    const res = await fetch(`${BASE_URL}/groups/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    await handleResponse(res);
   },
 
   async joinGroup(id: string): Promise<void> {
@@ -128,6 +151,32 @@ export const apiService = {
       headers: getHeaders()
     });
     await handleResponse(res);
+  },
+
+  // Ratings
+  async submitRating(groupId: string, data: { group_rating: number; leader_rating: number }): Promise<{success: boolean; rating: Rating; edits_remaining: number; message: string}> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/rate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data)
+    });
+    return handleResponse(res);
+  },
+
+  async getMyRating(groupId: string): Promise<Rating | null> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/my-rating`, {
+      headers: getHeaders()
+    });
+    const data = await handleResponse(res);
+    return data.rating;
+  },
+
+  async deleteRating(groupId: string): Promise<{success: boolean; message: string}> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/rate`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    return handleResponse(res);
   },
 
   // Messages

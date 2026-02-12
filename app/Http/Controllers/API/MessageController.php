@@ -5,9 +5,14 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Message;
 use App\Models\StudyGroup;
+use App\Models\User;
 use App\Models\Notification;
+use App\Services\KarmaService;
+use App\Mail\MessageReceivedMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 
 class MessageController extends Controller {
     public function index($groupId) {
@@ -76,10 +81,29 @@ class MessageController extends Controller {
                     'message' => $notificationMessage
                 ]
             ]);
+
+            // Send email notification to group leader if their email is verified
+            $leader = User::find($group->creator_id);
+            if ($leader && $leader->email_verified_at) {
+                try {
+                    $messagePreview = $msg->file_path
+                        ? "📎 Sent a file: {$msg->file_name}"
+                        : substr($request->content, 0, 100) . (strlen($request->content) > 100 ? '...' : '');
+
+                    Mail::to($leader->email)->send(new MessageReceivedMail(
+                        $leader->name,
+                        $user->name,
+                        $group->name,
+                        $messagePreview
+                    ));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send message notification email: ' . $e->getMessage());
+                }
+            }
         }
 
-        // Grant karma for contribution
-        $user->increment('karma_points', 5);
+        // Grant karma for contribution (bonus if file attached)
+        KarmaService::awardMessage($user, $msg->file_path !== null);
 
         return $msg->load('user');
     }
