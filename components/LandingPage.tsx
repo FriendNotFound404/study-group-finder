@@ -59,7 +59,7 @@ const LandingPage: React.FC = () => {
         <div className="relative">
           <div className="absolute inset-0 bg-orange-500/10 blur-[100px] rounded-full"></div>
           <div className="relative bg-white border border-slate-200 rounded-[3rem] p-4 shadow-2xl">
-            <img src="https://www.u-fukui.ac.jp/wp/wp-content/uploads/Assumption-Campus.jpg" className="rounded-[2.5rem] w-full h-auto grayscale opacity-90" alt="Study Group" />
+            <img src="https://www.u-fukui.ac.jp/wp/wp-content/uploads/Assumption-Campus.jpg" className="rounded-[2.5rem] w-full h-auto opacity-90" alt="Study Group" />
             <div className="absolute -bottom-8 -left-8 bg-white p-6 rounded-3xl shadow-xl border border-slate-100 animate-bounce duration-[3000ms]">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>

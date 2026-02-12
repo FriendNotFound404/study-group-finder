@@ -90,7 +90,7 @@ const SignupPage: React.FC<{ onSignup: (u: User) => void }> = ({ onSignup }) => 
               <input 
                 type="email" required 
                 className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 font-bold text-sm transition-all"
-                placeholder="john.doe@au.edu"
+                placeholder="u6....@au.edu"
                 value={formData.email}
                 onChange={e => setFormData({...formData, email: e.target.value})}
               />
