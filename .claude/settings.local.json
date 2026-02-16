@@ -7,7 +7,13 @@
       "Bash(ls:*)",
       "Bash(npm run dev:*)",
       "Bash(curl:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(npm run build:*)",
+      "Bash(grep:*)",
+      "Bash(mysql:*)",
+      "Bash(php -r:*)",
+      "Bash(php -l:*)",
+      "Bash(./verify_deployment.sh:*)"
     ]
   }
 }

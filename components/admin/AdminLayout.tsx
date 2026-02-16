@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, UsersIcon, MessageSquare, AlertTriangle, BarChart3, Settings, LogOut, Shield, Menu, X, Bell } from 'lucide-react';
+import { LayoutDashboard, Users, UsersIcon, MessageSquare, AlertTriangle, BarChart3, Settings, LogOut, Shield, Menu, X, Bell, Calendar, Star } from 'lucide-react';
 import NotificationDropdown from '../NotificationDropdown';
 import { AppNotification } from '../../types';
 import { apiService } from '../../services/apiService';
@@ -16,12 +16,15 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [adminUser, setAdminUser] = useState<{ name: string; role: string } | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Get admin user info from localStorage
     const adminAuth = localStorage.getItem('admin_auth');
     if (adminAuth) {
+      const authData = JSON.parse(adminAuth);
+      setAdminUser({ name: authData.name, role: authData.role });
       fetchNotifications();
       const interval = setInterval(fetchNotifications, 30000); // Poll every 30s
       return () => clearInterval(interval);
@@ -40,14 +43,44 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   const fetchNotifications = async () => {
     try {
+      // Get auth token
+      const authData = localStorage.getItem('admin_auth');
+      const token = authData ? JSON.parse(authData).token : null;
+
+      if (!token) {
+        console.error('No admin auth token found');
+        return;
+      }
+
       // Use admin-specific notification endpoints
       const [listResponse, countResponse] = await Promise.all([
-        fetch('http://localhost:8000/api/admin/notifications'),
-        fetch('http://localhost:8000/api/admin/notifications/unread-count')
+        fetch('http://localhost:8000/api/admin/notifications', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        }),
+        fetch('http://localhost:8000/api/admin/notifications/unread-count', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        })
       ]);
+
+      if (!listResponse.ok || !countResponse.ok) {
+        console.error('Failed to fetch notifications:', listResponse.status, countResponse.status);
+        return;
+      }
 
       const list = await listResponse.json();
       const countData = await countResponse.json();
+
+      // Ensure list is an array
+      if (!Array.isArray(list)) {
+        console.error('Notifications response is not an array:', list);
+        return;
+      }
 
       setNotifications(prev => {
         const newIds = new Set(list.map((n: AppNotification) => n.id));
@@ -64,11 +97,22 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   const markAllRead = async () => {
     try {
+      // Get auth token
+      const authData = localStorage.getItem('admin_auth');
+      const token = authData ? JSON.parse(authData).token : null;
+
+      if (!token) {
+        console.error('No admin auth token found');
+        return;
+      }
+
       // Use admin-specific mark-read endpoint
       await fetch('http://localhost:8000/api/admin/notifications/mark-read', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
         }
       });
       setUnreadCount(0);
@@ -87,6 +131,8 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { path: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/admin/users', icon: Users, label: 'User Management' },
     { path: '/admin/groups', icon: UsersIcon, label: 'Group Management' },
+    { path: '/admin/events', icon: Calendar, label: 'Events Management' },
+    { path: '/admin/ratings', icon: Star, label: 'Ratings Management' },
     { path: '/admin/reports', icon: AlertTriangle, label: 'User Reports' },
     { path: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
   ];
@@ -201,7 +247,14 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             </div>
             <div className="h-10 w-[1px] bg-slate-200 mx-2 hidden sm:block"></div>
             <div className="px-4 py-2 bg-purple-50 border border-purple-200 rounded-xl">
-              <p className="text-xs font-black text-purple-600 uppercase tracking-widest">Administrator</p>
+              {adminUser && (
+                <div className="flex flex-col items-end">
+                  <p className="text-xs font-black text-purple-900 leading-tight">{adminUser.name}</p>
+                  <p className="text-[10px] font-black text-purple-600 uppercase tracking-widest">
+                    {adminUser.role}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </header>

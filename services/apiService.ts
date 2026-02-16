@@ -137,10 +137,11 @@ export const apiService = {
     await handleResponse(res);
   },
 
-  async rejectJoinRequest(groupId: string, userId: string): Promise<void> {
+  async rejectJoinRequest(groupId: string, userId: string, reason?: string): Promise<void> {
     const res = await fetch(`${BASE_URL}/groups/${groupId}/reject/${userId}`, {
       method: 'POST',
-      headers: getHeaders()
+      headers: getHeaders(),
+      body: JSON.stringify({ reason: reason || null })
     });
     await handleResponse(res);
   },
@@ -249,6 +250,30 @@ export const apiService = {
     return handleResponse(res);
   },
 
+  async submitReport(data: {
+    reported_user_id: number;
+    reported_group_id?: number;
+    reported_message_id?: number;
+    reason: string;
+    description: string;
+    evidence_url?: string;
+    priority?: string;
+  }): Promise<any> {
+    const res = await fetch(`${BASE_URL}/reports`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data)
+    });
+    return handleResponse(res);
+  },
+
+  async getMyReports(): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/reports/my-reports`, {
+      headers: getHeaders()
+    });
+    return handleResponse(res);
+  },
+
   // Calendar
   async getEvents(): Promise<any[]> {
     const res = await fetch(`${BASE_URL}/calendar/events`, { headers: getHeaders() });
@@ -264,10 +289,11 @@ export const apiService = {
     return handleResponse(res);
   },
 
-  async deleteEvent(id: string): Promise<void> {
+  async deleteEvent(id: string, reason?: string): Promise<void> {
     const res = await fetch(`${BASE_URL}/calendar/events/${id}`, {
       method: 'DELETE',
-      headers: getHeaders()
+      headers: getHeaders(),
+      body: JSON.stringify({ reason: reason || null })
     });
     await handleResponse(res);
   },

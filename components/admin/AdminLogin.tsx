@@ -17,9 +17,9 @@ const AdminLogin: React.FC = () => {
     try {
       const response = await apiService.login(credentials);
 
-      // Check if user is admin
-      if (response.user.email !== 'admin@au.edu') {
-        setError('Access denied. Admin credentials required.');
+      // Check if user has admin or moderator role
+      if (!['admin', 'moderator'].includes(response.user.role)) {
+        setError('Access denied. Admin or moderator credentials required.');
         setLoading(false);
         return;
       }

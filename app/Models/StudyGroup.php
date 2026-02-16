@@ -8,8 +8,13 @@ use Illuminate\Support\Facades\Auth;
 class StudyGroup extends Model
 {
     protected $fillable = [
-        'name', 'subject', 'faculty', 'description', 'max_members', 
-        'location', 'creator_id', 'status'
+        'name', 'subject', 'faculty', 'description', 'max_members',
+        'location', 'creator_id', 'status', 'approval_status', 'approved_by',
+        'approved_at', 'rejected_reason'
+    ];
+
+    protected $casts = [
+        'approved_at' => 'datetime',
     ];
 
     protected $appends = ['members_count', 'creator_name', 'is_member', 'has_pending_request', 'pending_requests_count', 'avg_group_rating', 'avg_leader_rating', 'total_ratings'];
@@ -51,6 +56,35 @@ class StudyGroup extends Model
 
     public function ratings() {
         return $this->hasMany(Rating::class, 'group_id');
+    }
+
+    public function approver() {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function reports() {
+        return $this->hasMany(Report::class, 'reported_group_id');
+    }
+
+    /**
+     * Check if group is pending approval
+     */
+    public function isPending() {
+        return $this->approval_status === 'pending';
+    }
+
+    /**
+     * Check if group is approved
+     */
+    public function isApproved() {
+        return $this->approval_status === 'approved';
+    }
+
+    /**
+     * Check if group is rejected
+     */
+    public function isRejected() {
+        return $this->approval_status === 'rejected';
     }
 
     public function getMembersCountAttribute() {

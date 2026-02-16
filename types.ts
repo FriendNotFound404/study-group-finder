@@ -103,13 +103,15 @@ export interface Event {
 export interface AppNotification {
   id: number;
   user_id: number;
-  type: 'message' | 'group_join' | 'event' | 'join_request' | 'join_approved' | 'join_rejected' | 'removed_from_group' | 'user_warned' | 'user_banned' | 'report_submitted';
+  type: 'message' | 'group_join' | 'event' | 'join_request' | 'join_approved' | 'join_rejected' | 'removed_from_group' | 'user_warned' | 'user_banned' | 'report_submitted' | 'user_suspended' | 'role_changed' | 'group_approved' | 'group_rejected' | 'ownership_transferred' | 'ownership_received' | 'group_leadership_changed' | 'password_reset' | 'report_resolved' | 'new_report' | 'warning_received' | 'group_archived_admin' | 'suspension_lifted' | 'ban_lifted' | 'new_group_pending';
   data: {
     user_id?: number;
     user_name?: string;
     group_id?: string;
     group_name?: string;
     message: string;
+    reason?: string;
+    creator_name?: string;
   };
   read_at: string | null;
   created_at: string;

@@ -163,7 +163,7 @@ const DiscoverPage: React.FC = () => {
                     <BookOpen className="text-orange-500" />
                   </div>
                   <h3 className="font-bold text-slate-900 mb-1">{subj.subject}</h3>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{subj.count} Active Sessions</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{subj.count} Active Groups</p>
                 </div>
               ))}
             </div>

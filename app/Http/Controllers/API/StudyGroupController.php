@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\StudyGroup;
 use App\Models\Notification;
 use App\Models\User;
+use App\Models\Message;
 use App\Services\KarmaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -16,18 +17,37 @@ use App\Mail\JoinRequestMail;
 use App\Mail\JoinApprovedMail;
 use App\Mail\JoinRejectedMail;
 use App\Mail\RemovedFromGroupMail;
+use App\Mail\GroupApprovedMail;
+use App\Mail\OwnershipTransferredMail;
 
 class StudyGroupController extends Controller
 {
     public function index() {
-        return StudyGroup::with('creator')->latest()->get();
+        $query = StudyGroup::with('creator');
+
+        // Regular users should only see approved groups
+        // Admins and moderators can see all groups (they manage them in admin panel)
+        $user = Auth::user();
+        if (!$user || !in_array($user->role, ['admin', 'moderator'])) {
+            $query->where('approval_status', 'approved');
+        }
+
+        return $query->latest()->get();
     }
 
     public function store(Request $request) {
         $user = Auth::user();
-        
+
         if (!$user) {
             return response()->json(['message' => 'Unauthenticated'], 401);
+        }
+
+        // Check if email is verified
+        if (!$user->email_verified_at) {
+            return response()->json([
+                'message' => 'Please verify your email address to create groups. Check your inbox for the verification link.',
+                'requires_verification' => true
+            ], 403);
         }
 
         $validated = $request->validate([
@@ -39,9 +59,18 @@ class StudyGroupController extends Controller
             'location' => 'required|string',
         ]);
 
+        // Check if this is the user's first group creation
+        $hasApprovedGroups = StudyGroup::where('creator_id', $user->id)
+            ->where('approval_status', 'approved')
+            ->exists();
+
+        // First-time creators need approval, subsequent groups are auto-approved
+        $approvalStatus = $hasApprovedGroups ? 'approved' : 'pending';
+
         $group = StudyGroup::create(array_merge($validated, [
             'creator_id' => $user->id,
-            'status' => 'open'
+            'status' => 'open',
+            'approval_status' => $approvalStatus
         ]));
 
         // Upgrade user to leader role if they aren't already
@@ -58,6 +87,30 @@ class StudyGroupController extends Controller
 
         // Award karma for creating a group
         KarmaService::awardGroupCreation($user);
+
+        // If group is pending, notify admins/moderators and send notification to user
+        if ($approvalStatus === 'pending') {
+            // Notify all admins and moderators
+            $moderators = User::whereIn('role', ['admin', 'moderator'])->get();
+            foreach ($moderators as $moderator) {
+                Notification::create([
+                    'user_id' => $moderator->id,
+                    'type' => 'new_group_pending',
+                    'data' => [
+                        'message' => "New group '{$group->name}' by {$user->name} is pending approval",
+                        'group_id' => $group->id,
+                        'group_name' => $group->name,
+                        'creator_name' => $user->name
+                    ]
+                ]);
+            }
+
+            return response()->json([
+                'group' => $group,
+                'message' => 'Group created successfully! It is pending approval by an administrator.',
+                'pending_approval' => true
+            ], 201);
+        }
 
         return response()->json($group, 201);
     }
@@ -331,6 +384,13 @@ class StudyGroupController extends Controller
             'updated_at' => now()
         ]);
 
+        // Delete the join_request notification for the leader
+        Notification::where('user_id', $currentUser->id)
+            ->where('type', 'join_request')
+            ->where('data->group_id', $groupId)
+            ->where('data->user_id', $userId)
+            ->delete();
+
         // Notify the requesting user that they were approved
         $requestingUser = User::find($userId);
         if ($requestingUser) {
@@ -363,7 +423,7 @@ class StudyGroupController extends Controller
     /**
      * Reject a join request
      */
-    public function rejectRequest($groupId, $userId) {
+    public function rejectRequest(Request $request, $groupId, $userId) {
         $group = StudyGroup::findOrFail($groupId);
         $currentUser = Auth::user();
 
@@ -373,13 +433,16 @@ class StudyGroupController extends Controller
         }
 
         // Check if request exists and is pending
-        $request = $group->allMemberRelations()
+        $joinRequest = $group->allMemberRelations()
             ->where('user_id', $userId)
             ->first();
 
-        if (!$request || $request->pivot->status !== 'pending') {
+        if (!$joinRequest || $joinRequest->pivot->status !== 'pending') {
             return response()->json(['message' => 'No pending request found for this user.'], 404);
         }
+
+        // Get optional rejection reason from request body
+        $rejectionReason = $request->input('reason');
 
         // Reject the request
         $group->allMemberRelations()->updateExistingPivot($userId, [
@@ -388,23 +451,36 @@ class StudyGroupController extends Controller
             'updated_at' => now()
         ]);
 
+        // Delete the join_request notification for the leader
+        Notification::where('user_id', $currentUser->id)
+            ->where('type', 'join_request')
+            ->where('data->group_id', $groupId)
+            ->where('data->user_id', $userId)
+            ->delete();
+
         // Notify the requesting user that they were rejected
         $requestingUser = User::find($userId);
         if ($requestingUser) {
+            $notificationMessage = "Your request to join '{$group->name}' was not approved at this time.";
+            if ($rejectionReason) {
+                $notificationMessage .= " Reason: {$rejectionReason}";
+            }
+
             Notification::create([
                 'user_id' => $userId,
                 'type' => 'join_rejected',
                 'data' => [
                     'group_id' => $group->id,
                     'group_name' => $group->name,
-                    'message' => "Your request to join '{$group->name}' was not approved at this time."
+                    'message' => $notificationMessage,
+                    'reason' => $rejectionReason
                 ]
             ]);
 
             // Send email notification if user's email is verified
             if ($requestingUser->email_verified_at) {
                 try {
-                    Mail::to($requestingUser->email)->send(new JoinRejectedMail($requestingUser->name, $group->name));
+                    Mail::to($requestingUser->email)->send(new JoinRejectedMail($requestingUser->name, $group->name, $rejectionReason));
                 } catch (\Exception $e) {
                     \Log::error('Failed to send join rejected email: ' . $e->getMessage());
                 }
@@ -468,5 +544,272 @@ class StudyGroupController extends Controller
         }
 
         return response()->json(['message' => 'Member removed successfully.']);
+    }
+
+    /**
+     * Transfer group ownership to another member (Admin only)
+     */
+    public function transferOwnership(Request $request, $groupId)
+    {
+        $validated = $request->validate([
+            'new_owner_id' => 'required|exists:users,id'
+        ]);
+
+        $group = StudyGroup::with('members')->findOrFail($groupId);
+        $newOwnerId = $validated['new_owner_id'];
+
+        // Check if new owner is a member of the group
+        $isNewOwnerMember = $group->members()->where('users.id', $newOwnerId)->exists();
+        if (!$isNewOwnerMember) {
+            return response()->json([
+                'message' => 'The new owner must be a current member of the group.'
+            ], 422);
+        }
+
+        $oldOwner = $group->creator;
+        $newOwner = User::find($newOwnerId);
+
+        // Transfer ownership
+        $group->creator_id = $newOwnerId;
+        $group->save();
+
+        // Update new owner's role to leader if not already
+        if ($newOwner->role === 'member') {
+            $newOwner->role = 'leader';
+            $newOwner->save();
+        }
+
+        // Notify old owner
+        Notification::create([
+            'user_id' => $oldOwner->id,
+            'type' => 'ownership_transferred',
+            'data' => [
+                'message' => "Ownership of '{$group->name}' has been transferred to {$newOwner->name}",
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'new_owner' => $newOwner->name
+            ]
+        ]);
+
+        // Notify new owner
+        Notification::create([
+            'user_id' => $newOwnerId,
+            'type' => 'ownership_received',
+            'data' => [
+                'message' => "You are now the leader of '{$group->name}'",
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'previous_owner' => $oldOwner->name
+            ]
+        ]);
+
+        // Send email to old owner if their email is verified
+        if ($oldOwner->email_verified_at) {
+            try {
+                Mail::to($oldOwner->email)->send(new OwnershipTransferredMail(
+                    $oldOwner,
+                    $group,
+                    $newOwner,
+                    false // isNewOwner = false
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send ownership transferred email to old owner: ' . $e->getMessage());
+            }
+        }
+
+        // Send email to new owner if their email is verified
+        if ($newOwner->email_verified_at) {
+            try {
+                Mail::to($newOwner->email)->send(new OwnershipTransferredMail(
+                    $newOwner,
+                    $group,
+                    $newOwner,
+                    true // isNewOwner = true
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send ownership transferred email to new owner: ' . $e->getMessage());
+            }
+        }
+
+        // Notify all other members
+        $otherMembers = $group->members()->where('users.id', '!=', $newOwnerId)->get();
+        foreach ($otherMembers as $member) {
+            Notification::create([
+                'user_id' => $member->id,
+                'type' => 'group_leadership_changed',
+                'data' => [
+                    'message' => "{$newOwner->name} is now the leader of '{$group->name}'",
+                    'group_id' => $group->id,
+                    'group_name' => $group->name,
+                    'new_leader' => $newOwner->name
+                ]
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Ownership transferred successfully',
+            'group' => $group->fresh()->load('creator')
+        ]);
+    }
+
+    /**
+     * Approve a pending group (Admin only)
+     */
+    public function approveGroup($id)
+    {
+        $group = StudyGroup::with('creator')->findOrFail($id);
+
+        if ($group->approval_status !== 'pending') {
+            return response()->json([
+                'message' => 'Group is not pending approval'
+            ], 422);
+        }
+
+        $group->approval_status = 'approved';
+        $group->approved_by = Auth::id();
+        $group->approved_at = now();
+        $group->save();
+
+        // Notify group creator
+        Notification::create([
+            'user_id' => $group->creator_id,
+            'type' => 'group_approved',
+            'data' => [
+                'message' => "Your group '{$group->name}' has been approved!",
+                'group_id' => $group->id,
+                'group_name' => $group->name
+            ]
+        ]);
+
+        // Send email notification if creator's email is verified
+        if ($group->creator->email_verified_at) {
+            try {
+                Mail::to($group->creator->email)->send(new GroupApprovedMail(
+                    $group->creator,
+                    $group,
+                    Auth::user()->name
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send group approved email: ' . $e->getMessage());
+            }
+        }
+
+        return response()->json([
+            'message' => 'Group approved successfully',
+            'group' => $group->fresh()
+        ]);
+    }
+
+    /**
+     * Reject a pending group (Admin only)
+     */
+    public function rejectGroup(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'reason' => 'required|string|max:1000'
+        ]);
+
+        $group = StudyGroup::with('creator')->findOrFail($id);
+
+        if ($group->approval_status !== 'pending') {
+            return response()->json([
+                'message' => 'Group is not pending approval'
+            ], 422);
+        }
+
+        $group->approval_status = 'rejected';
+        $group->rejected_reason = $validated['reason'];
+        $group->save();
+
+        // Notify group creator
+        Notification::create([
+            'user_id' => $group->creator_id,
+            'type' => 'group_rejected',
+            'data' => [
+                'message' => "Your group '{$group->name}' was not approved",
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'reason' => $validated['reason']
+            ]
+        ]);
+
+        return response()->json([
+            'message' => 'Group rejected',
+            'group' => $group->fresh()
+        ]);
+    }
+
+    /**
+     * Force archive a group with reason (Admin only)
+     */
+    public function forceArchive(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'reason' => 'required|string|max:1000'
+        ]);
+
+        $group = StudyGroup::with(['creator', 'members'])->findOrFail($id);
+
+        $group->status = 'archived';
+        $group->save();
+
+        // Notify group leader
+        Notification::create([
+            'user_id' => $group->creator_id,
+            'type' => 'group_archived_admin',
+            'data' => [
+                'message' => "Your group '{$group->name}' has been archived by administration",
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'reason' => $validated['reason']
+            ]
+        ]);
+
+        // Notify all members
+        foreach ($group->members as $member) {
+            Notification::create([
+                'user_id' => $member->id,
+                'type' => 'group_archived_admin',
+                'data' => [
+                    'message' => "The group '{$group->name}' has been archived by administration",
+                    'group_id' => $group->id,
+                    'group_name' => $group->name,
+                    'reason' => $validated['reason']
+                ]
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Group archived successfully',
+            'group' => $group->fresh(),
+            'members_notified' => $group->members->count()
+        ]);
+    }
+
+    /**
+     * Get chat logs for a group (Admin only)
+     */
+    public function getChatLogs($groupId, Request $request)
+    {
+        $group = StudyGroup::findOrFail($groupId);
+
+        $search = $request->get('search', '');
+
+        $messages = Message::where('group_id', $groupId)
+            ->with('user')
+            ->when($search, function($query, $search) {
+                return $query->where('content', 'like', "%{$search}%")
+                    ->orWhereHas('user', function($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%");
+                    });
+            })
+            ->orderBy('created_at', 'asc')  // Changed to asc for chronological order
+            ->get();
+
+        return response()->json([
+            'group' => $group,
+            'messages' => $messages,
+            'total_messages' => $messages->count()
+        ]);
     }
 }

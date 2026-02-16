@@ -15,14 +15,16 @@ class JoinRejectedMail extends Mailable
 
     public $userName;
     public $groupName;
+    public $rejectionReason;
 
     /**
      * Create a new message instance.
      */
-    public function __construct($userName, $groupName)
+    public function __construct($userName, $groupName, $rejectionReason = null)
     {
         $this->userName = $userName;
         $this->groupName = $groupName;
+        $this->rejectionReason = $rejectionReason;
     }
 
     /**

@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\Mail;
 class FeedbackController extends Controller
 {
     public function index() {
-        // Regular users can only see their own reports
-        // Admins can see all reports (handled in AdminFeedbackController)
+        // Regular users can only see their own feedback
+        // Admins can see all feedback (handled in AdminFeedbackController)
         return Feedback::where('user_id', Auth::id())
             ->with('user')
             ->latest()
@@ -23,6 +23,16 @@ class FeedbackController extends Controller
     }
 
     public function store(Request $request) {
+        $user = Auth::user();
+
+        // Check if email is verified
+        if (!$user->email_verified_at) {
+            return response()->json([
+                'message' => 'Please verify your email address to submit feedback. Check your inbox for the verification link.',
+                'requires_verification' => true
+            ], 403);
+        }
+
         $validated = $request->validate([
             'group_name' => 'required|string',
             'rating' => 'required|integer|min:1|max:5',
@@ -37,17 +47,19 @@ class FeedbackController extends Controller
             'comment' => $validated['text']
         ]);
 
-        // Send notification to admin
-        $admin = User::where('email', 'admin@au.edu')->first();
-        if ($admin) {
+        // Send notification to all admin accounts
+        $adminEmails = ['admin@au.edu', 'studyhub.studygroupfinder@gmail.com'];
+        $admins = User::whereIn('email', $adminEmails)->get();
+
+        foreach ($admins as $admin) {
             Notification::create([
                 'user_id' => $admin->id,
-                'type' => 'report_submitted',
+                'type' => 'feedback_submitted',
                 'data' => [
-                    'message' => Auth::user()->name . ' submitted a new report',
-                    'reporter_name' => Auth::user()->name,
-                    'reported_user' => $validated['group_name'],
-                    'severity' => $validated['rating'],
+                    'message' => Auth::user()->name . ' submitted feedback',
+                    'user_name' => Auth::user()->name,
+                    'group_name' => $validated['group_name'],
+                    'rating' => $validated['rating'],
                     'feedback_id' => $feedback->id
                 ]
             ]);
@@ -63,7 +75,7 @@ class FeedbackController extends Controller
                     ));
                 } catch (\Exception $e) {
                     // Log error but don't fail the request
-                    \Log::error('Failed to send report email: ' . $e->getMessage());
+                    \Log::error('Failed to send feedback notification email: ' . $e->getMessage());
                 }
             }
         }

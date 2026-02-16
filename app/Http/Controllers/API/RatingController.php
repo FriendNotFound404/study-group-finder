@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Rating;
 use App\Models\StudyGroup;
+use App\Services\KarmaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -20,6 +21,14 @@ class RatingController extends Controller
 
         if (!$user) {
             return response()->json(['message' => 'Unauthenticated'], 401);
+        }
+
+        // Check if email is verified
+        if (!$user->email_verified_at) {
+            return response()->json([
+                'message' => 'Please verify your email address to rate groups. Check your inbox for the verification link.',
+                'requires_verification' => true
+            ], 403);
         }
 
         $group = StudyGroup::findOrFail($groupId);
@@ -70,6 +79,14 @@ class RatingController extends Controller
             ]);
 
             $editsRemaining = 3;
+
+            // Award/deduct karma to group leader based on rating
+            $groupLeader = $group->creator;
+            if ($groupLeader) {
+                // Calculate average of group_rating and leader_rating
+                $averageRating = ($validated['group_rating'] + $validated['leader_rating']) / 2;
+                KarmaService::processRatingKarma($groupLeader, $averageRating);
+            }
         }
 
         return response()->json([

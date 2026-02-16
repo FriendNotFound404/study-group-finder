@@ -12,7 +12,8 @@ import {
   Search,
   Bell,
   Menu,
-  X
+  X,
+  Trophy
 } from 'lucide-react';
 
 import HomePage from './components/HomePage';
@@ -22,6 +23,7 @@ import CalendarPage from './components/CalendarPage';
 import ProfilePage from './components/ProfilePage';
 import UserProfilePage from './components/UserProfilePage';
 import SettingsPage from './components/SettingsPage';
+import LeadersPage from './components/LeadersPage';
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import SignupPage from './components/SignupPage';
@@ -32,6 +34,8 @@ import AdminLogin from './components/admin/AdminLogin';
 import AdminDashboard from './components/admin/AdminDashboard';
 import AdminUsers from './components/admin/AdminUsers';
 import AdminGroups from './components/admin/AdminGroups';
+import AdminEvents from './components/admin/AdminEvents';
+import AdminRatings from './components/admin/AdminRatings';
 import AdminReports from './components/admin/AdminReports';
 import AdminAnalytics from './components/admin/AdminAnalytics';
 
@@ -268,6 +272,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
           <SidebarLink to="/groups" icon={<Users size={20} />} label="My Groups" />
           <SidebarLink to="/report" icon={<AlertTriangle size={20} />} label="Report" />
           <SidebarLink to="/calendar" icon={<CalendarIcon size={20} />} label="Calendar" />
+          <SidebarLink to="/leaders" icon={<Trophy size={20} />} label="Contributors" />
           <SidebarLink to="/profile" icon={<UserIcon size={20} />} label="Profile" />
           <SidebarLink to="/settings" icon={<Settings size={20} />} label="Settings" />
         </nav>
@@ -444,7 +449,7 @@ const isAdminAuth = (): boolean => {
     const saved = localStorage.getItem('admin_auth');
     if (!saved) return false;
     const u = JSON.parse(saved);
-    return u?.email === 'admin@au.edu';
+    return ['admin', 'moderator'].includes(u?.role);
   } catch { return false; }
 };
 
@@ -498,6 +503,9 @@ const App: React.FC = () => {
         <Route path="/calendar" element={
           user ? <Layout user={user} onLogout={handleLogout} pageTitle="Calendar" pageSubtitle="Manage your study schedule"><CalendarPage /></Layout> : <Navigate to="/login" />
         } />
+        <Route path="/leaders" element={
+          user ? <Layout user={user} onLogout={handleLogout}><LeadersPage /></Layout> : <Navigate to="/login" />
+        } />
         <Route path="/profile" element={
           user ? <Layout user={user} onLogout={handleLogout} pageTitle="Profile" pageSubtitle="View and edit your information"><ProfilePage user={user} onUserUpdate={handleUserUpdate} /></Layout> : <Navigate to="/login" />
         } />
@@ -518,6 +526,12 @@ const App: React.FC = () => {
         } />
         <Route path="/admin/groups" element={
           isAdminAuth() ? <AdminGroups /> : <Navigate to="/admin/login" />
+        } />
+        <Route path="/admin/events" element={
+          isAdminAuth() ? <AdminEvents /> : <Navigate to="/admin/login" />
+        } />
+        <Route path="/admin/ratings" element={
+          isAdminAuth() ? <AdminRatings /> : <Navigate to="/admin/login" />
         } />
         <Route path="/admin/reports" element={
           isAdminAuth() ? <AdminReports /> : <Navigate to="/admin/login" />

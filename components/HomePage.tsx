@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Users, MapPin, Sparkles, Loader2, X, AlertCircle, Search, Eraser, Filter, ChevronDown, Lock, Archive, Unlock, TrendingUp, Trophy, Flame, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { Plus, Users, MapPin, Sparkles, Loader2, X, AlertCircle, Search, Eraser, Filter, ChevronDown, Lock, Archive, Unlock, TrendingUp, Flame, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { StudyGroup, User, GroupStatus } from '../types';
 import { geminiService } from '../services/geminiService';
@@ -14,7 +14,6 @@ const HomePage: React.FC = () => {
 
   // Discover data state
   const [trendingGroups, setTrendingGroups] = useState<StudyGroup[]>([]);
-  const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [searchedUsers, setSearchedUsers] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -95,14 +94,12 @@ const HomePage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [allGroups, trending, leaders] = await Promise.all([
+      const [allGroups, trending] = await Promise.all([
         apiService.getGroups(),
-        apiService.getTrendingGroups(),
-        apiService.getLeaders()
+        apiService.getTrendingGroups()
       ]);
       setGroups(allGroups);
       setTrendingGroups(trending);
-      setLeaderboard(leaders);
     } catch (err: any) {
       console.error("Failed to load data:", err);
       setError("Could not connect to the campus server. Make sure your backend is running.");
@@ -156,8 +153,12 @@ const HomePage: React.FC = () => {
       const matchesLocation = !locationFilter || g.location === locationFilter;
       const matchesStatus = !statusFilter || g.status === statusFilter;
 
-      // Rating filter: filter by minimum average group rating
-      const matchesRating = !ratingFilter || (g.avg_group_rating && g.avg_group_rating >= parseFloat(ratingFilter));
+      // Rating filter: filter by minimum average of both group rating and leader rating
+      const matchesRating = !ratingFilter || (
+        g.avg_group_rating !== undefined &&
+        g.avg_leader_rating !== undefined &&
+        ((g.avg_group_rating + g.avg_leader_rating) / 2) >= parseFloat(ratingFilter)
+      );
 
       // Date filter: filter by creation date
       let matchesDate = true;
@@ -262,7 +263,7 @@ const HomePage: React.FC = () => {
     e.preventDefault();
     try {
       await apiService.createGroup({
-        name: `${newGroup.subject} Study Session`,
+        name: newGroup.subject,
         ...newGroup
       });
       setIsModalOpen(false);
@@ -361,8 +362,21 @@ const HomePage: React.FC = () => {
             <p className="text-[10px] font-semibold text-slate-500">Led by {group.creator_name}</p>
             {group.total_ratings && group.total_ratings > 0 && (
               <div className="flex items-center gap-2 mt-1">
-                <StarRating value={group.avg_group_rating || 0} readonly size="sm" />
-                <span className="text-[10px] text-slate-400 font-bold">({group.total_ratings})</span>
+                <StarRating
+                  value={
+                    group.avg_group_rating !== undefined && group.avg_leader_rating !== undefined
+                      ? (group.avg_group_rating + group.avg_leader_rating) / 2
+                      : group.avg_group_rating || 0
+                  }
+                  readonly
+                  size="sm"
+                />
+                <span className="text-[10px] text-slate-400 font-bold">
+                  {group.avg_group_rating !== undefined && group.avg_leader_rating !== undefined
+                    ? `(${((group.avg_group_rating + group.avg_leader_rating) / 2).toFixed(1)} • ${group.total_ratings})`
+                    : `(${group.total_ratings})`
+                  }
+                </span>
               </div>
             )}
           </div>
@@ -540,7 +554,7 @@ const HomePage: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Min Rating</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Average Rating</label>
               <div className="relative">
                 <select
                   className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
@@ -713,7 +727,7 @@ const HomePage: React.FC = () => {
                 <Flame className="text-orange-500" size={24} />
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">Trending Groups</h2>
-                  <p className="text-sm text-slate-500">Most popular study sessions right now</p>
+                  <p className="text-sm text-slate-500">Most popular study groups right now</p>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -778,7 +792,7 @@ const HomePage: React.FC = () => {
                             ? 'Request to Join'
                           : isFull
                             ? 'Hub Full'
-                          : 'Join Session'}
+                          : 'Join Group'}
                       </button>
                     </div>
                   );
@@ -806,7 +820,7 @@ const HomePage: React.FC = () => {
                 <p className="text-sm text-slate-500">
                   {isFullSearchMode
                     ? `Groups and users matching "${searchQuery}"`
-                    : 'Recently created study sessions'}
+                    : 'Recently created study groups'}
                 </p>
               </div>
             </div>
@@ -872,7 +886,7 @@ const HomePage: React.FC = () => {
                   ) : (
                     <>
                       <Users size={48} className="mx-auto mb-4 text-slate-200" />
-                      <p className="font-bold text-slate-400">No active sessions right now.</p>
+                      <p className="font-bold text-slate-400">No active groups right now.</p>
                       <button onClick={() => setIsModalOpen(true)} className="mt-4 text-orange-500 font-black text-xs uppercase tracking-widest">Start the first one</button>
                     </>
                   )}
@@ -984,7 +998,7 @@ const HomePage: React.FC = () => {
                             ? 'Request to Join'
                           : isFull
                             ? 'Hub Full'
-                          : 'Join Session'}
+                          : 'Join Group'}
                       </button>
                       <Link to={`/groups?group=${group.id}`} className="px-6 py-4 text-slate-400 hover:text-slate-900 font-black text-xs uppercase tracking-widest transition-colors">
                         Workspace
@@ -997,69 +1011,6 @@ const HomePage: React.FC = () => {
             )}
           </div>
 
-          {/* Leaders Leaderboard Section */}
-          {!isFullSearchMode && leaderboard.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <Trophy className="text-orange-500" size={24} />
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">Top Contributors</h2>
-                  <p className="text-sm text-slate-500">Most active members in the community</p>
-                </div>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="bg-slate-50/50 border-b border-slate-100">
-                      <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Rank</th>
-                      <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">User</th>
-                      <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Major</th>
-                      <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Role</th>
-                      <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Karma Points</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leaderboard.slice(0, 10).map((user, idx) => (
-                      <tr key={user.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                        <td className="px-8 py-6">
-                          <span className={`w-8 h-8 flex items-center justify-center rounded-lg font-bold text-sm ${idx === 0 ? 'bg-orange-500 text-white shadow-lg shadow-orange-100' : 'bg-slate-100 text-slate-500'}`}>
-                            #{idx + 1}
-                          </span>
-                        </td>
-                        <td className="px-8 py-6">
-                          <div className="flex items-center gap-3">
-                            <Link
-                              to={`/profile/${user.id}`}
-                              className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center font-bold text-orange-600 border border-orange-100 cursor-pointer hover:scale-105 transition-transform"
-                            >
-                              {user.name[0]}
-                            </Link>
-                            <Link
-                              to={`/profile/${user.id}`}
-                              className="font-bold text-slate-900 hover:text-orange-500 transition-colors cursor-pointer"
-                            >
-                              {user.name}
-                            </Link>
-                          </div>
-                        </td>
-                        <td className="px-8 py-6">
-                          <span className="text-sm font-semibold text-slate-500">{user.major || 'Student'}</span>
-                        </td>
-                        <td className="px-8 py-6">
-                          <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg ${user.role === 'leader' ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500'}`}>
-                            {user.role}
-                          </span>
-                        </td>
-                        <td className="px-8 py-6 text-right">
-                          <span className="font-black text-slate-900">{user.karma_points}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </>
       )}
 

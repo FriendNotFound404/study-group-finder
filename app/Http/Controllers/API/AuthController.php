@@ -58,7 +58,17 @@ class AuthController extends Controller
         // Check if user is banned
         if ($user->banned) {
             return response()->json([
-                'message' => 'Your account has been banned. Please contact support for assistance.'
+                'message' => 'Your account has been banned. Please contact support for assistance.',
+                'reason' => $user->banned_reason
+            ], 403);
+        }
+
+        // Check if user is suspended
+        if ($user->suspended_until && now()->lessThan($user->suspended_until)) {
+            return response()->json([
+                'message' => 'Your account has been suspended until ' . $user->suspended_until->format('F j, Y g:i A'),
+                'reason' => $user->suspension_reason,
+                'suspended_until' => $user->suspended_until->toIso8601String()
             ], 403);
         }
 

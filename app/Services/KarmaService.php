@@ -20,9 +20,18 @@ use Illuminate\Support\Facades\Log;
  *
  * LOSING KARMA (Negative Actions):
  * - Receiving a warning: -15 points
+ * - Getting suspended (3 days): -10 points
+ * - Getting suspended (7 days): -20 points
+ * - Getting suspended (30 days): -30 points
  * - Getting banned: -50 points
  * - Being kicked from a group: -20 points
  * - Leaving a group voluntarily: -5 points
+ * - Receiving a bad rating (1-2 stars average): -5 points per rating
+ *
+ * RATING SYSTEM KARMA:
+ * - Receiving a good rating (4-5 stars average): +10 points per rating
+ * - Receiving a mediocre rating (3 stars average): +0 points
+ * - Receiving a bad rating (1-2 stars average): -5 points per rating
  */
 class KarmaService
 {
@@ -77,6 +86,22 @@ class KarmaService
     }
 
     /**
+     * Deduct karma for being suspended
+     */
+    public static function penalizeSuspension(User $user, int $days): void
+    {
+        // Scale penalty based on suspension duration
+        $points = match(true) {
+            $days <= 3 => 10,
+            $days <= 7 => 20,
+            $days <= 30 => 30,
+            default => 40  // For very long suspensions
+        };
+
+        self::deductKarma($user, $points, "Suspended for {$days} days");
+    }
+
+    /**
      * Deduct karma for being banned
      */
     public static function penalizeBan(User $user): void
@@ -98,6 +123,43 @@ class KarmaService
     public static function penalizeLeave(User $user): void
     {
         self::deductKarma($user, 5, 'Left a group');
+    }
+
+    /**
+     * Award karma for receiving a good rating
+     * @param float $averageRating Average of group_rating and leader_rating
+     */
+    public static function awardGoodRating(User $user, float $averageRating): void
+    {
+        if ($averageRating >= 4.0) {
+            self::addKarma($user, 10, "Received a {$averageRating} star rating");
+        }
+    }
+
+    /**
+     * Deduct karma for receiving a bad rating
+     * @param float $averageRating Average of group_rating and leader_rating
+     */
+    public static function penalizeBadRating(User $user, float $averageRating): void
+    {
+        if ($averageRating < 3.0) {
+            self::deductKarma($user, 5, "Received a {$averageRating} star rating");
+        }
+    }
+
+    /**
+     * Process rating karma (award or deduct based on rating value)
+     * @param User $groupLeader The leader being rated
+     * @param float $averageRating Average of group_rating and leader_rating
+     */
+    public static function processRatingKarma(User $groupLeader, float $averageRating): void
+    {
+        if ($averageRating >= 4.0) {
+            self::addKarma($groupLeader, 10, "Received a {$averageRating} star rating");
+        } elseif ($averageRating < 3.0) {
+            self::deductKarma($groupLeader, 5, "Received a {$averageRating} star rating");
+        }
+        // No karma change for 3.0-3.9 (mediocre ratings)
     }
 
     /**
@@ -132,9 +194,14 @@ class KarmaService
             'meeting_creation' => 15,
             'join_approval' => 5,
             'warning' => -15,
+            'suspension_3d' => -10,
+            'suspension_7d' => -20,
+            'suspension_30d' => -30,
             'ban' => -50,
             'kick' => -20,
             'leave' => -5,
+            'good_rating' => 10,
+            'bad_rating' => -5,
         ];
 
         return $values[$action] ?? 0;

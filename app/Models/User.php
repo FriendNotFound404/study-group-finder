@@ -13,9 +13,16 @@ class User extends Authenticatable implements MustVerifyEmail
 
     const ROLE_MEMBER = 'member';
     const ROLE_LEADER = 'leader';
+    const ROLE_MODERATOR = 'moderator';
+    const ROLE_ADMIN = 'admin';
 
     protected $fillable = [
-        'name', 'email', 'password', 'role', 'major', 'bio', 'location', 'karma_points'
+        'name', 'email', 'password', 'role', 'major', 'bio', 'location', 'karma_points',
+        'suspended_until', 'suspension_reason', 'banned_reason'
+    ];
+
+    protected $casts = [
+        'suspended_until' => 'datetime',
     ];
 
     protected $hidden = [
@@ -32,6 +39,32 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function isMember() {
         return $this->role === self::ROLE_MEMBER;
+    }
+
+    public function isModerator() {
+        return $this->role === self::ROLE_MODERATOR;
+    }
+
+    public function isAdmin() {
+        return $this->role === self::ROLE_ADMIN;
+    }
+
+    public function isModeratorOrAdmin() {
+        return in_array($this->role, [self::ROLE_MODERATOR, self::ROLE_ADMIN]);
+    }
+
+    /**
+     * Check if user is currently suspended
+     */
+    public function isSuspended() {
+        return $this->suspended_until && $this->suspended_until->isFuture();
+    }
+
+    /**
+     * Check if user can perform actions (not banned or suspended)
+     */
+    public function canPerformActions() {
+        return !$this->banned && !$this->isSuspended();
     }
 
     public function createdGroups() {
@@ -68,5 +101,48 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function notifications() {
         return $this->hasMany(Notification::class)->latest();
+    }
+
+    public function userWarnings() {
+        return $this->hasMany(UserWarning::class);
+    }
+
+    public function activeWarnings() {
+        return $this->hasMany(UserWarning::class)->active();
+    }
+
+    /**
+     * Reports submitted by this user
+     */
+    public function submittedReports() {
+        return $this->hasMany(Report::class, 'reporter_id');
+    }
+
+    /**
+     * Reports filed against this user
+     */
+    public function receivedReports() {
+        return $this->hasMany(Report::class, 'reported_user_id');
+    }
+
+    /**
+     * Reports resolved by this moderator/admin
+     */
+    public function resolvedReports() {
+        return $this->hasMany(Report::class, 'resolved_by');
+    }
+
+    /**
+     * Moderation actions performed by this moderator/admin
+     */
+    public function moderationActions() {
+        return $this->hasMany(ModerationLog::class, 'moderator_id');
+    }
+
+    /**
+     * Moderation actions received by this user
+     */
+    public function moderationHistory() {
+        return $this->hasMany(ModerationLog::class, 'target_user_id');
     }
 }

@@ -8,48 +8,194 @@ use App\Models\StudyGroup;
 use App\Models\Message;
 use App\Models\Feedback;
 use App\Models\Notification;
+use App\Models\Event;
+use App\Models\Rating;
+use App\Models\Report;
+use App\Models\UserWarning;
 use App\Services\KarmaService;
 use App\Mail\UserWarnedMail;
 use App\Mail\UserBannedMail;
+use App\Mail\UserSuspendedMail;
+use App\Mail\UserUnbannedMail;
+use App\Mail\UserUnsuspendedMail;
+use App\Mail\PasswordResetByAdminMail;
+use App\Mail\RoleChangedMail;
+use App\Mail\GroupApprovedMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Auth;
 
 class AdminController extends Controller
 {
+    /**
+     * Clear admin dashboard and analytics caches
+     */
+    private function clearAdminCaches()
+    {
+        Cache::forget('admin_dashboard_stats');
+        Cache::forget('admin_analytics_daily');
+        Cache::forget('admin_analytics_weekly');
+        Cache::forget('admin_analytics_monthly');
+    }
+
     /**
      * Get dashboard statistics
      */
     public function dashboard()
     {
-        $stats = [
-            'total_users' => User::count(),
-            'total_groups' => StudyGroup::count(),
-            'total_messages' => Message::count(),
-            'total_feedback' => Feedback::count(),
-            'active_groups' => StudyGroup::where('status', 'open')->count(),
-            'leaders_count' => User::where('role', 'leader')->count(),
-            'members_count' => User::where('role', 'member')->count(),
+        // Cache dashboard stats for 2 minutes (120 seconds)
+        $stats = Cache::remember('admin_dashboard_stats', 120, function () {
+            // Calculate average rating
+            $avgGroupRating = Rating::avg('group_rating');
+            $avgLeaderRating = Rating::avg('leader_rating');
+            $avgRating = $avgGroupRating && $avgLeaderRating
+                ? ($avgGroupRating + $avgLeaderRating) / 2
+                : 0;
 
-            // Recent activity
-            'recent_users' => User::orderBy('created_at', 'desc')->take(5)->get(),
-            'recent_groups' => StudyGroup::with('creator')->orderBy('created_at', 'desc')->take(5)->get(),
-            'recent_feedback' => Feedback::orderBy('created_at', 'desc')->take(5)->get(),
+            // New metrics
+            $newGroupsToday = StudyGroup::whereDate('created_at', today())->count();
+            $reportsCount = Report::where('status', 'pending')->count();
+            $violationsCount = User::where('banned', true)->count()
+                + User::whereNotNull('suspended_until')->where('suspended_until', '>', now())->count();
 
-            // Charts data
-            'groups_by_status' => StudyGroup::select('status', DB::raw('count(*) as count'))
-                ->groupBy('status')
-                ->get(),
-            'groups_by_faculty' => StudyGroup::select('faculty', DB::raw('count(*) as count'))
-                ->groupBy('faculty')
-                ->orderBy('count', 'desc')
+            // Meetings this week (events)
+            $meetingsThisWeek = Event::whereBetween('start_time', [
+                now()->startOfWeek(),
+                now()->endOfWeek()
+            ])->count();
+
+            // Group with most meetings this week
+            $groupWithMostMeetings = StudyGroup::withCount(['events' => function($query) {
+                $query->whereBetween('start_time', [now()->startOfWeek(), now()->endOfWeek()]);
+            }])
+                ->with('creator')
+                ->orderBy('events_count', 'desc')
+                ->first();
+
+            // Only return if it has meetings this week
+            if ($groupWithMostMeetings && $groupWithMostMeetings->events_count === 0) {
+                $groupWithMostMeetings = null;
+            }
+
+            // Most reported users
+            $mostReportedUsers = Report::select('reported_user_id', DB::raw('count(*) as report_count'))
+                ->with('reportedUser:id,name,email')
+                ->groupBy('reported_user_id')
+                ->orderBy('report_count', 'desc')
                 ->take(10)
-                ->get(),
-            'users_by_role' => User::select('role', DB::raw('count(*) as count'))
-                ->groupBy('role')
-                ->get(),
-        ];
+                ->get()
+                ->map(function($report) {
+                    return [
+                        'user_id' => $report->reported_user_id,
+                        'name' => $report->reportedUser->name ?? 'Unknown',
+                        'email' => $report->reportedUser->email ?? 'Unknown',
+                        'report_count' => $report->report_count
+                    ];
+                });
+
+            // Recent activity feed (mixed activities)
+            $recentActivityFeed = collect();
+
+            // Recent user registrations
+            $recentUsers = User::orderBy('created_at', 'desc')->take(5)->get()->map(function($user) {
+                return [
+                    'type' => 'user_joined',
+                    'description' => $user->name . ' joined the platform',
+                    'timestamp' => $user->created_at,
+                    'user_name' => $user->name
+                ];
+            });
+
+            // Recent group creations
+            $recentGroups = StudyGroup::orderBy('created_at', 'desc')->take(5)->get()->map(function($group) {
+                return [
+                    'type' => 'group_created',
+                    'description' => 'New group: ' . $group->name,
+                    'timestamp' => $group->created_at,
+                    'group_name' => $group->name
+                ];
+            });
+
+            // Recent reports
+            $recentReports = Report::orderBy('created_at', 'desc')->take(5)->get()->map(function($report) {
+                return [
+                    'type' => 'report_submitted',
+                    'description' => 'New report submitted',
+                    'timestamp' => $report->created_at,
+                    'report_id' => $report->id
+                ];
+            });
+
+            $recentActivityFeed = $recentUsers->concat($recentGroups)
+                ->concat($recentReports)
+                ->sortByDesc('timestamp')
+                ->take(20)
+                ->values();
+
+            return [
+                'total_users' => User::count(),
+                'total_groups' => StudyGroup::count(),
+                'total_messages' => Message::count(),
+                'total_feedback' => Feedback::count(),
+                'total_ratings' => Rating::count(),
+                'total_events' => Event::count(),
+                'active_groups' => StudyGroup::where('status', 'open')->count(),
+                'leaders_count' => User::where('role', 'leader')->count(),
+                'members_count' => User::where('role', 'member')->count(),
+                'admin_count' => User::where('role', 'admin')->count(),
+                'moderator_count' => User::where('role', 'moderator')->count(),
+                'avg_rating' => round($avgRating, 1),
+                'upcoming_events' => Event::where('start_time', '>', now())->count(),
+
+                // New metrics
+                'new_groups_today' => $newGroupsToday,
+                'reports_count' => $reportsCount,
+                'violations_count' => $violationsCount,
+                'meetings_this_week' => $meetingsThisWeek,
+                'group_with_most_meetings' => $groupWithMostMeetings,
+                'most_reported_users' => $mostReportedUsers,
+                'recent_activity_feed' => $recentActivityFeed,
+
+                // Recent activity
+                'recent_users' => User::orderBy('created_at', 'desc')->take(5)->get(),
+                'recent_groups' => StudyGroup::with('creator')->orderBy('created_at', 'desc')->take(5)->get(),
+                'recent_feedback' => Feedback::orderBy('created_at', 'desc')->take(5)->get(),
+                'recent_ratings' => Rating::with(['user', 'group'])
+                    ->orderBy('created_at', 'desc')
+                    ->take(5)
+                    ->get()
+                    ->map(function ($rating) {
+                        return [
+                            'id' => $rating->id,
+                            'group_rating' => $rating->group_rating,
+                            'leader_rating' => $rating->leader_rating,
+                            'user_name' => $rating->user->name,
+                            'group_name' => $rating->group->name,
+                            'created_at' => $rating->created_at,
+                        ];
+                    }),
+                'recent_events' => Event::with(['user', 'group'])
+                    ->orderBy('start_time', 'desc')
+                    ->take(5)
+                    ->get(),
+
+                // Charts data
+                'groups_by_status' => StudyGroup::select('status', DB::raw('count(*) as count'))
+                    ->groupBy('status')
+                    ->get(),
+                'groups_by_faculty' => StudyGroup::select('faculty', DB::raw('count(*) as count'))
+                    ->groupBy('faculty')
+                    ->orderBy('count', 'desc')
+                    ->take(10)
+                    ->get(),
+                'users_by_role' => User::select('role', DB::raw('count(*) as count'))
+                    ->groupBy('role')
+                    ->get(),
+            ];
+        });
 
         return response()->json($stats);
     }
@@ -61,15 +207,31 @@ class AdminController extends Controller
     {
         $perPage = $request->get('per_page', 20);
         $search = $request->get('search', '');
+        $role = $request->get('role', '');
 
         $users = User::when($search, function ($query, $search) {
             return $query->where('name', 'like', "%{$search}%")
                 ->orWhere('email', 'like', "%{$search}%")
                 ->orWhere('major', 'like', "%{$search}%");
         })
+        ->when($role, function ($query, $role) {
+            return $query->where('role', $role);
+        })
         ->withCount(['createdGroups', 'joinedGroups'])
         ->orderBy('created_at', 'desc')
         ->paginate($perPage);
+
+        // Add warning expiration info to each user
+        $users->getCollection()->transform(function ($user) {
+            // Get the earliest expiring active warning
+            $earliestWarning = $user->activeWarnings()
+                ->orderBy('expires_at', 'asc')
+                ->first();
+
+            $user->warning_expires_at = $earliestWarning ? $earliestWarning->expires_at : null;
+
+            return $user;
+        });
 
         return response()->json($users);
     }
@@ -103,10 +265,16 @@ class AdminController extends Controller
      */
     public function deleteUser($id)
     {
+        // Only admins can delete users
+        if (Auth::user()->role !== 'admin') {
+            return response()->json(['message' => 'Only admins can delete users permanently'], 403);
+        }
+
         $user = User::findOrFail($id);
 
         // Prevent deleting admin
-        if ($user->email === 'admin@au.edu') {
+        $adminEmails = ['admin@au.edu', 'studyhub.studygroupfinder@gmail.com'];
+        if (in_array($user->email, $adminEmails)) {
             return response()->json(['message' => 'Cannot delete admin account'], 403);
         }
 
@@ -114,6 +282,9 @@ class AdminController extends Controller
         StudyGroup::where('creator_id', $id)->delete();
 
         $user->delete();
+
+        // Clear caches
+        $this->clearAdminCaches();
 
         return response()->json(['message' => 'User deleted successfully']);
     }
@@ -126,6 +297,7 @@ class AdminController extends Controller
         $perPage = $request->get('per_page', 20);
         $search = $request->get('search', '');
         $status = $request->get('status', '');
+        $approvalStatus = $request->get('approval_status', '');
 
         $groups = StudyGroup::with('creator')
             ->when($search, function ($query, $search) {
@@ -135,6 +307,9 @@ class AdminController extends Controller
             })
             ->when($status, function ($query, $status) {
                 return $query->where('status', $status);
+            })
+            ->when($approvalStatus, function ($query, $approvalStatus) {
+                return $query->where('approval_status', $approvalStatus);
             })
             ->orderBy('created_at', 'desc')
             ->paginate($perPage);
@@ -172,6 +347,11 @@ class AdminController extends Controller
      */
     public function deleteGroup($id)
     {
+        // Only admins can delete groups permanently
+        if (Auth::user()->role !== 'admin') {
+            return response()->json(['message' => 'Only admins can delete groups permanently'], 403);
+        }
+
         $group = StudyGroup::findOrFail($id);
 
         // Delete associated messages
@@ -179,7 +359,96 @@ class AdminController extends Controller
 
         $group->delete();
 
+        // Clear caches
+        $this->clearAdminCaches();
+
         return response()->json(['message' => 'Group deleted successfully']);
+    }
+
+    /**
+     * Approve a pending group
+     */
+    public function approveGroup($id)
+    {
+        $group = StudyGroup::findOrFail($id);
+
+        if ($group->approval_status !== 'pending') {
+            return response()->json(['message' => 'Group is not pending approval'], 400);
+        }
+
+        $group->update([
+            'approval_status' => 'approved',
+            'approved_by' => Auth::id(),
+            'approved_at' => now()
+        ]);
+
+        // Notify the group creator
+        Notification::create([
+            'user_id' => $group->creator_id,
+            'type' => 'group_approved',
+            'data' => [
+                'message' => "Your group '{$group->name}' has been approved!",
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'approved_by' => Auth::user()->name
+            ]
+        ]);
+
+        // Send email to creator
+        $creator = User::find($group->creator_id);
+        if ($creator && $creator->email_verified_at) {
+            Mail::to($creator->email)->send(new GroupApprovedMail($creator, $group, Auth::user()->name));
+        }
+
+        // Clear caches
+        $this->clearAdminCaches();
+
+        return response()->json([
+            'message' => 'Group approved successfully',
+            'group' => $group
+        ]);
+    }
+
+    /**
+     * Reject a pending group
+     */
+    public function rejectGroup(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'reason' => 'required|string'
+        ]);
+
+        $group = StudyGroup::findOrFail($id);
+
+        if ($group->approval_status !== 'pending') {
+            return response()->json(['message' => 'Group is not pending approval'], 400);
+        }
+
+        $group->update([
+            'approval_status' => 'rejected',
+            'rejected_reason' => $validated['reason'],
+            'approved_by' => Auth::id()
+        ]);
+
+        // Notify the group creator
+        Notification::create([
+            'user_id' => $group->creator_id,
+            'type' => 'group_rejected',
+            'data' => [
+                'message' => "Your group '{$group->name}' was not approved",
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'reason' => $validated['reason']
+            ]
+        ]);
+
+        // Clear caches
+        $this->clearAdminCaches();
+
+        return response()->json([
+            'message' => 'Group rejected',
+            'group' => $group
+        ]);
     }
 
     /**
@@ -207,60 +476,244 @@ class AdminController extends Controller
     }
 
     /**
-     * Get analytics data
+     * Get analytics data with time range support
      */
-    public function getAnalytics()
+    public function getAnalytics(Request $request)
     {
-        // User growth over last 30 days
-        $userGrowth = User::select(
-            DB::raw('DATE(created_at) as date'),
-            DB::raw('count(*) as count')
-        )
-        ->where('created_at', '>=', now()->subDays(30))
-        ->groupBy('date')
-        ->orderBy('date')
-        ->get();
+        // Get time range parameter (default: monthly/30 days)
+        $range = $request->get('range', 'monthly');
 
-        // Group creation over last 30 days
-        $groupGrowth = StudyGroup::select(
-            DB::raw('DATE(created_at) as date'),
-            DB::raw('count(*) as count')
-        )
-        ->where('created_at', '>=', now()->subDays(30))
-        ->groupBy('date')
-        ->orderBy('date')
-        ->get();
+        // Cache analytics for 10 minutes (600 seconds) with range-specific key
+        $cacheKey = "admin_analytics_{$range}";
 
-        // Message activity
-        $messageActivity = Message::select(
-            DB::raw('DATE(created_at) as date'),
-            DB::raw('count(*) as count')
-        )
-        ->where('created_at', '>=', now()->subDays(30))
-        ->groupBy('date')
-        ->orderBy('date')
-        ->get();
+        $analytics = Cache::remember($cacheKey, 600, function () use ($range) {
+            // Determine date range
+            $daysBack = match($range) {
+                'daily' => 1,
+                'weekly' => 7,
+                'monthly' => 30,
+                default => 30
+            };
 
-        // Top groups by members
-        $topGroups = StudyGroup::withCount('members')
-            ->orderBy('members_count', 'desc')
-            ->take(10)
+            $startDate = now()->subDays($daysBack);
+
+            // User growth
+            $userGrowth = User::select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw('count(*) as count')
+            )
+            ->where('created_at', '>=', $startDate)
+            ->groupBy('date')
+            ->orderBy('date')
             ->get();
 
-        // Top subjects
-        $topSubjects = StudyGroup::select('subject', DB::raw('count(*) as count'))
-            ->groupBy('subject')
+            // Group creation
+            $groupGrowth = StudyGroup::select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw('count(*) as count')
+            )
+            ->where('created_at', '>=', $startDate)
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+            // Message activity
+            $messageActivity = Message::select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw('count(*) as count')
+            )
+            ->where('created_at', '>=', $startDate)
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+            // Rating activity
+            $ratingActivity = Rating::select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw('count(*) as count')
+            )
+            ->where('created_at', '>=', $startDate)
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+            // Event activity
+            $eventActivity = Event::select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw('count(*) as count')
+            )
+            ->where('created_at', '>=', $startDate)
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
+            // Top groups by members
+            $topGroups = StudyGroup::withCount('members')
+                ->orderBy('members_count', 'desc')
+                ->take(10)
+                ->get();
+
+            // Most reported users
+            $mostReportedUsers = Report::select('reported_user_id', DB::raw('count(*) as report_count'))
+                ->with('reportedUser:id,name,email')
+                ->groupBy('reported_user_id')
+                ->orderBy('report_count', 'desc')
+                ->take(10)
+                ->get()
+                ->map(function($report) {
+                    return [
+                        'user_id' => $report->reported_user_id,
+                        'name' => $report->reportedUser->name ?? 'Unknown',
+                        'email' => $report->reportedUser->email ?? 'Unknown',
+                        'report_count' => $report->report_count
+                    ];
+                });
+
+            // --- NEW ANALYTICS METRICS ---
+
+            // User retention rate (percentage of all users active in last 30 days)
+            $totalUsers = User::count();
+            $activeUsersLast30Days = User::where(function($query) {
+                $query->whereHas('messages', function($q) {
+                    $q->where('created_at', '>=', now()->subDays(30));
+                })
+                ->orWhereHas('joinedGroups', function($q) {
+                    $q->where('group_user.created_at', '>=', now()->subDays(30));
+                })
+                ->orWhere('last_login_at', '>=', now()->subDays(30))
+                ->orWhere('created_at', '>=', now()->subDays(30));
+            })
+            ->count();
+
+            $retentionRate = $totalUsers > 0
+                ? round(($activeUsersLast30Days / $totalUsers) * 100, 1)
+                : 0;
+
+            // Database-agnostic SQL for extracting hour and day
+            $driver = DB::connection()->getDriverName();
+            $hourSql = $driver === 'sqlite'
+                ? "CAST(strftime('%H', created_at) AS INTEGER)"
+                : "HOUR(created_at)";
+            $daySql = $driver === 'sqlite'
+                ? "CAST(strftime('%w', created_at) AS INTEGER)"
+                : "DAYOFWEEK(created_at)";
+            $eventHourSql = $driver === 'sqlite'
+                ? "CAST(strftime('%H', start_time) AS INTEGER)"
+                : "HOUR(start_time)";
+            $eventDaySql = $driver === 'sqlite'
+                ? "CAST(strftime('%w', start_time) AS INTEGER)"
+                : "DAYOFWEEK(start_time)";
+
+            // Peak activity hours (from messages)
+            $peakActivityHours = Message::select(
+                DB::raw("{$hourSql} as hour"),
+                DB::raw('count(*) as count')
+            )
+            ->where('created_at', '>=', now()->subDays(30))
+            ->groupBy('hour')
             ->orderBy('count', 'desc')
-            ->take(10)
             ->get();
 
-        return response()->json([
-            'user_growth' => $userGrowth,
-            'group_growth' => $groupGrowth,
-            'message_activity' => $messageActivity,
-            'top_groups' => $topGroups,
-            'top_subjects' => $topSubjects,
-        ]);
+            // Peak activity days (day of week from messages)
+            $peakActivityDays = Message::select(
+                DB::raw("{$daySql} as day"),
+                DB::raw('count(*) as count')
+            )
+            ->where('created_at', '>=', now()->subDays(30))
+            ->groupBy('day')
+            ->orderBy('count', 'desc')
+            ->get()
+            ->map(function($item) use ($driver) {
+                $days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                // SQLite returns 0-6 (0=Sunday), MySQL returns 1-7 (1=Sunday)
+                $dayIndex = $driver === 'sqlite' ? $item->day : $item->day - 1;
+                $item->day_name = $days[$dayIndex] ?? 'Unknown';
+                return $item;
+            });
+
+            // Most active day for events
+            $mostActiveDayForEvents = Event::select(
+                DB::raw("{$eventDaySql} as day"),
+                DB::raw('count(*) as count')
+            )
+            ->where('start_time', '>=', now()->subDays(30))
+            ->groupBy('day')
+            ->orderBy('count', 'desc')
+            ->get()
+            ->map(function($item) use ($driver) {
+                $days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                // SQLite returns 0-6 (0=Sunday), MySQL returns 1-7 (1=Sunday)
+                $dayIndex = $driver === 'sqlite' ? $item->day : $item->day - 1;
+                $item->day_name = $days[$dayIndex] ?? 'Unknown';
+                return $item;
+            });
+
+            // Most active time for events (hour distribution)
+            $mostActiveTimeForEvents = Event::select(
+                DB::raw("{$eventHourSql} as hour"),
+                DB::raw('count(*) as count')
+            )
+            ->where('start_time', '>=', now()->subDays(30))
+            ->groupBy('hour')
+            ->orderBy('hour')
+            ->get();
+
+            // Average group size
+            $groups = StudyGroup::withCount('members')
+                ->where('status', '!=', 'archived')
+                ->get();
+
+            $avgGroupSize = $groups->count() > 0
+                ? round($groups->avg('members_count'), 1)
+                : 0;
+
+            // Top subjects
+            $topSubjects = StudyGroup::select('subject', DB::raw('count(*) as count'))
+                ->groupBy('subject')
+                ->orderBy('count', 'desc')
+                ->take(10)
+                ->get();
+
+            // Report severity distribution
+            $reportSeverityDistribution = Report::select('priority', DB::raw('count(*) as count'))
+                ->groupBy('priority')
+                ->get()
+                ->sortByDesc(function($item) {
+                    // Sort by severity: urgent > high > medium > low
+                    $order = ['urgent' => 4, 'high' => 3, 'medium' => 2, 'low' => 1];
+                    return $order[$item->priority] ?? 0;
+                })
+                ->values()
+                ->map(function($item) {
+                    return [
+                        'priority' => $item->priority,
+                        'count' => $item->count
+                    ];
+                });
+
+            return [
+                'user_growth' => $userGrowth,
+                'group_growth' => $groupGrowth,
+                'message_activity' => $messageActivity,
+                'rating_activity' => $ratingActivity,
+                'event_activity' => $eventActivity,
+                'top_groups' => $topGroups,
+                'top_subjects' => $topSubjects,
+                'most_reported_users' => $mostReportedUsers,
+                'report_severity_distribution' => $reportSeverityDistribution,
+
+                // New metrics
+                'user_retention_rate' => $retentionRate,
+                'peak_activity_hours' => $peakActivityHours,
+                'peak_activity_days' => $peakActivityDays,
+                'most_active_day_for_events' => $mostActiveDayForEvents,
+                'most_active_time_for_events' => $mostActiveTimeForEvents,
+                'average_group_size' => $avgGroupSize,
+                'time_range' => $range,
+            ];
+        });
+
+        return response()->json($analytics);
     }
 
     /**
@@ -308,29 +761,50 @@ class AdminController extends Controller
      */
     public function warnUser(Request $request, $userId)
     {
-        $user = User::findOrFail($userId);
+        try {
+            $user = User::findOrFail($userId);
 
-        // Prevent warning admin
-        if ($user->email === 'admin@au.edu') {
-            return response()->json(['message' => 'Cannot warn admin account'], 403);
-        }
+            // Moderators cannot warn admins/moderators
+            if (Auth::user()->role === 'moderator' && in_array($user->role, ['admin', 'moderator'])) {
+                return response()->json(['message' => 'Moderators cannot warn admins or moderators'], 403);
+            }
 
-        $user->warnings = ($user->warnings ?? 0) + 1;
+            // Prevent warning admin
+            $adminEmails = ['admin@au.edu', 'studyhub.studygroupfinder@gmail.com'];
+            if (in_array($user->email, $adminEmails)) {
+                return response()->json(['message' => 'Cannot warn admin account'], 403);
+            }
 
-        // Deduct karma for receiving a warning
-        KarmaService::penalizeWarning($user);
+            $validated = $request->validate([
+                'reason' => 'nullable|string|max:500',
+            ]);
 
-        // Auto-ban if warnings reach 3
-        $autoBanned = false;
-        if ($user->warnings >= 3) {
-            $user->banned = true;
-            $autoBanned = true;
+            // Create warning record with 7-day expiration
+            UserWarning::create([
+                'user_id' => $user->id,
+                'warned_by' => auth()->id(),
+                'reason' => $validated['reason'] ?? 'General warning from admin',
+                'expires_at' => now()->addDays(7),
+            ]);
 
-            // Additional karma penalty for ban
-            KarmaService::penalizeBan($user);
-        }
+            // Count active (non-expired) warnings
+            $activeWarningsCount = $user->activeWarnings()->count();
+            $user->warnings = $activeWarningsCount;
 
-        $user->save();
+            // Deduct karma for receiving a warning
+            KarmaService::penalizeWarning($user);
+
+            // Auto-ban if active warnings reach 3
+            $autoBanned = false;
+            if ($activeWarningsCount >= 3) {
+                $user->banned = true;
+                $autoBanned = true;
+
+                // Additional karma penalty for ban
+                KarmaService::penalizeBan($user);
+            }
+
+            $user->save();
 
         // Send notification to warned user
         if ($autoBanned) {
@@ -357,23 +831,32 @@ class AdminController extends Controller
                 }
             }
         } else {
-            $warningReason = 'You have received a warning from the admin. Please review our community guidelines.';
+            // Prepare notification data
+            $notificationData = [
+                'message' => 'You have received a warning from the admin',
+                'warnings' => $user->warnings,
+                'max_warnings' => 3,
+                'expires_at' => now()->addDays(7)->toDateTimeString()
+            ];
+
+            // Only include reason if admin provided one
+            if (isset($validated['reason']) && !empty($validated['reason'])) {
+                $notificationData['reason'] = $validated['reason'];
+            }
+
             Notification::create([
                 'user_id' => $user->id,
                 'type' => 'user_warned',
-                'data' => [
-                    'message' => 'You have received a warning from the admin',
-                    'warnings' => $user->warnings,
-                    'max_warnings' => 3
-                ]
+                'data' => $notificationData
             ]);
 
             // Send warning email if user's email is verified
             if ($user->email_verified_at) {
                 try {
+                    $emailReason = $validated['reason'] ?? 'You have received a warning from the admin';
                     Mail::to($user->email)->send(new UserWarnedMail(
                         $user->name,
-                        $warningReason,
+                        $emailReason,
                         $user->warnings
                     ));
                 } catch (\Exception $e) {
@@ -382,60 +865,110 @@ class AdminController extends Controller
             }
         }
 
-        return response()->json([
-            'message' => 'User warned successfully',
-            'user' => $user,
-            'auto_banned' => $autoBanned
-        ]);
+            // Clear caches
+            $this->clearAdminCaches();
+
+            return response()->json([
+                'message' => 'User warned successfully',
+                'user' => $user,
+                'auto_banned' => $autoBanned
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Failed to warn user: ' . $e->getMessage(), [
+                'user_id' => $userId,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to warn user',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
      * Ban a user directly
      */
-    public function banUser($userId)
+    public function banUser(Request $request, $userId)
     {
-        $user = User::findOrFail($userId);
+        try {
+            $validated = $request->validate([
+                'reason' => 'nullable|string|max:1000'
+            ]);
 
-        // Prevent banning admin
-        if ($user->email === 'admin@au.edu') {
-            return response()->json(['message' => 'Cannot ban admin account'], 403);
-        }
+            $user = User::findOrFail($userId);
 
-        $user->banned = true;
-        $user->save();
-
-        // Deduct karma for being banned
-        KarmaService::penalizeBan($user);
-
-        $banReason = 'Direct ban by administrator. Please contact support for assistance.';
-
-        // Send notification to banned user
-        Notification::create([
-            'user_id' => $user->id,
-            'type' => 'user_banned',
-            'data' => [
-                'message' => 'Your account has been banned by an administrator',
-                'reason' => $banReason,
-                'contact' => 'Please contact support for assistance'
-            ]
-        ]);
-
-        // Send ban email if user's email is verified
-        if ($user->email_verified_at) {
-            try {
-                Mail::to($user->email)->send(new UserBannedMail(
-                    $user->name,
-                    $banReason
-                ));
-            } catch (\Exception $e) {
-                \Log::error('Failed to send ban email: ' . $e->getMessage());
+            // Moderators cannot ban admins/moderators
+            if (Auth::user()->role === 'moderator' && in_array($user->role, ['admin', 'moderator'])) {
+                return response()->json(['message' => 'Moderators cannot ban admins or moderators'], 403);
             }
-        }
 
-        return response()->json([
-            'message' => 'User banned successfully',
-            'user' => $user
-        ]);
+            // Prevent banning admin
+            $adminEmails = ['admin@au.edu', 'studyhub.studygroupfinder@gmail.com'];
+            if (in_array($user->email, $adminEmails)) {
+                return response()->json(['message' => 'Cannot ban admin account'], 403);
+            }
+
+            $user->banned = true;
+            if (isset($validated['reason'])) {
+                $user->banned_reason = $validated['reason'];
+            }
+            $user->save();
+
+            // Revoke all tokens to immediately log out the user
+            $user->tokens()->delete();
+
+            // Deduct karma for being banned
+            KarmaService::penalizeBan($user);
+
+            // Prepare notification data
+            $notificationData = [
+                'message' => 'Your account has been banned by an administrator'
+            ];
+
+            // Only include reason if admin provided one
+            if (isset($validated['reason']) && !empty($validated['reason'])) {
+                $notificationData['reason'] = $validated['reason'];
+            }
+
+            // Send notification to banned user
+            Notification::create([
+                'user_id' => $user->id,
+                'type' => 'user_banned',
+                'data' => $notificationData
+            ]);
+
+            // Send ban email if user's email is verified
+            if ($user->email_verified_at) {
+                try {
+                    $emailReason = $validated['reason'] ?? 'Your account has been banned by an administrator';
+                    Mail::to($user->email)->send(new UserBannedMail(
+                        $user->name,
+                        $emailReason
+                    ));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send ban email: ' . $e->getMessage());
+                }
+            }
+
+            // Clear caches
+            $this->clearAdminCaches();
+
+            return response()->json([
+                'message' => 'User banned successfully',
+                'user' => $user
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Failed to ban user: ' . $e->getMessage(), [
+                'user_id' => $userId,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to ban user',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -449,6 +982,32 @@ class AdminController extends Controller
         $user->warnings = 0; // Reset warnings when unbanning
         $user->save();
 
+        // Create notification
+        Notification::create([
+            'user_id' => $user->id,
+            'type' => 'ban_lifted',
+            'data' => [
+                'message' => 'Your account ban has been lifted. All warnings have been cleared.',
+                'lifted_by' => Auth::user()->name,
+                'lifted_at' => now()->toDateTimeString()
+            ]
+        ]);
+
+        // Send email if user's email is verified
+        if ($user->email_verified_at) {
+            try {
+                Mail::to($user->email)->send(new UserUnbannedMail(
+                    $user,
+                    Auth::user()->name
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send unban email: ' . $e->getMessage());
+            }
+        }
+
+        // Clear caches
+        $this->clearAdminCaches();
+
         return response()->json([
             'message' => 'User unbanned successfully',
             'user' => $user
@@ -456,20 +1015,63 @@ class AdminController extends Controller
     }
 
     /**
+     * Unsuspend a user
+     */
+    public function unsuspendUser($userId)
+    {
+        $user = User::findOrFail($userId);
+
+        $user->suspended_until = null;
+        $user->suspension_reason = null;
+        $user->save();
+
+        // Create notification
+        Notification::create([
+            'user_id' => $user->id,
+            'type' => 'suspension_lifted',
+            'data' => [
+                'message' => 'Your account suspension has been lifted',
+                'lifted_by' => Auth::user()->name,
+                'lifted_at' => now()->toDateTimeString()
+            ]
+        ]);
+
+        // Send email if user's email is verified
+        if ($user->email_verified_at) {
+            try {
+                Mail::to($user->email)->send(new UserUnsuspendedMail(
+                    $user,
+                    Auth::user()->name
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send unsuspend email: ' . $e->getMessage());
+            }
+        }
+
+        // Clear caches
+        $this->clearAdminCaches();
+
+        return response()->json([
+            'message' => 'User suspension lifted successfully',
+            'user' => $user
+        ]);
+    }
+
+    /**
      * Get admin notifications (report submissions)
      */
-    public function getNotifications()
+    public function getNotifications(Request $request)
     {
-        // Get admin user
-        $admin = User::where('email', 'admin@au.edu')->first();
+        // Get authenticated admin user
+        $admin = $request->user();
 
         if (!$admin) {
             return response()->json([]);
         }
 
-        // Get only report-related notifications for admin
+        // Get only admin-relevant notifications
         $notifications = Notification::where('user_id', $admin->id)
-            ->where('type', 'report_submitted')
+            ->whereIn('type', ['report_submitted', 'new_report', 'feedback_submitted', 'new_group_pending'])
             ->orderBy('created_at', 'desc')
             ->get();
 
@@ -479,17 +1081,17 @@ class AdminController extends Controller
     /**
      * Get unread notification count for admin
      */
-    public function getUnreadCount()
+    public function getUnreadCount(Request $request)
     {
-        // Get admin user
-        $admin = User::where('email', 'admin@au.edu')->first();
+        // Get authenticated admin user
+        $admin = $request->user();
 
         if (!$admin) {
             return response()->json(['count' => 0]);
         }
 
         $count = Notification::where('user_id', $admin->id)
-            ->where('type', 'report_submitted')
+            ->whereIn('type', ['report_submitted', 'new_report', 'feedback_submitted', 'new_group_pending'])
             ->whereNull('read_at')
             ->count();
 
@@ -499,20 +1101,368 @@ class AdminController extends Controller
     /**
      * Mark all admin notifications as read
      */
-    public function markNotificationsAsRead()
+    public function markNotificationsAsRead(Request $request)
     {
-        // Get admin user
-        $admin = User::where('email', 'admin@au.edu')->first();
+        // Get authenticated admin user
+        $admin = $request->user();
 
         if (!$admin) {
             return response()->json(['message' => 'Admin not found'], 404);
         }
 
         Notification::where('user_id', $admin->id)
-            ->where('type', 'report_submitted')
+            ->whereIn('type', ['report_submitted', 'new_report', 'feedback_submitted'])
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
 
         return response()->json(['message' => 'All notifications marked as read']);
+    }
+
+    /**
+     * Get all events with pagination
+     */
+    public function getEvents(Request $request)
+    {
+        $perPage = $request->get('per_page', 20);
+        $search = $request->get('search', '');
+        $type = $request->get('type', '');
+
+        $events = Event::with(['user', 'group'])
+            ->when($search, function ($query, $search) {
+                return $query->where('title', 'like', "%{$search}%")
+                    ->orWhere('location', 'like', "%{$search}%")
+                    ->orWhereHas('user', function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('group', function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%");
+                    });
+            })
+            ->when($type, function ($query, $type) {
+                return $query->where('type', $type);
+            })
+            ->orderBy('start_time', 'desc')
+            ->paginate($perPage);
+
+        return response()->json($events);
+    }
+
+    /**
+     * Update event
+     */
+    public function updateEvent(Request $request, $id)
+    {
+        $event = Event::findOrFail($id);
+
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'type' => 'required|in:General,Project,Group Meeting,Exam,Assignment',
+            'start_time' => 'required|date',
+            'location' => 'nullable|string|max:255',
+            'recurrence' => 'required|in:none,daily,weekly,monthly',
+            'recurrence_count' => 'nullable|integer|min:1|max:365',
+        ]);
+
+        $event->update($validated);
+
+        return response()->json(['message' => 'Event updated successfully', 'event' => $event->load(['user', 'group'])]);
+    }
+
+    /**
+     * Delete event
+     */
+    public function deleteEvent($id)
+    {
+        // Only admins can delete events permanently
+        if (Auth::user()->role !== 'admin') {
+            return response()->json(['message' => 'Only admins can delete events permanently'], 403);
+        }
+
+        $event = Event::findOrFail($id);
+        $event->delete();
+
+        return response()->json(['message' => 'Event deleted successfully']);
+    }
+
+    /**
+     * Get all ratings with pagination
+     */
+    public function getRatings(Request $request)
+    {
+        $perPage = $request->get('per_page', 20);
+        $search = $request->get('search', '');
+        $minRating = $request->get('min_rating', '');
+        $ratingType = $request->get('rating_type', ''); // 'group', 'leader', or empty for both
+
+        $ratings = Rating::with(['user', 'group'])
+            ->when($search, function ($query, $search) {
+                return $query->whereHas('user', function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%");
+                })
+                ->orWhereHas('group', function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%");
+                });
+            })
+            ->when($minRating && $ratingType === 'group', function ($query) use ($minRating) {
+                return $query->where('group_rating', '>=', $minRating);
+            })
+            ->when($minRating && $ratingType === 'leader', function ($query) use ($minRating) {
+                return $query->where('leader_rating', '>=', $minRating);
+            })
+            ->when($minRating && !$ratingType, function ($query) use ($minRating) {
+                return $query->whereRaw('(CAST(group_rating AS REAL) + CAST(leader_rating AS REAL)) / 2.0 >= CAST(? AS REAL)', [$minRating]);
+            })
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
+
+        return response()->json($ratings);
+    }
+
+    /**
+     * Delete rating
+     */
+    public function deleteRating($id)
+    {
+        $rating = Rating::findOrFail($id);
+        $rating->delete();
+
+        return response()->json(['message' => 'Rating deleted successfully']);
+    }
+
+    /**
+     * Get user profile with detailed information
+     */
+    public function getUserProfile($id)
+    {
+        $user = User::with([
+            'createdGroups',
+            'joinedGroups',
+            'submittedReports',
+            'receivedReports.reporter',
+            'moderationHistory.moderator',
+            'userWarnings.warnedBy'
+        ])
+        ->withCount([
+            'createdGroups',
+            'joinedGroups',
+            'messages',
+            'submittedReports',
+            'receivedReports'
+        ])
+        ->findOrFail($id);
+
+        return response()->json([
+            'user' => $user,
+            'statistics' => [
+                'groups_created' => $user->created_groups_count,
+                'groups_joined' => $user->joined_groups_count,
+                'messages_sent' => $user->messages_count,
+                'reports_submitted' => $user->submitted_reports_count,
+                'reports_received' => $user->received_reports_count,
+                'warnings' => $user->warnings ?? 0,
+                'active_warnings' => $user->activeWarnings()->count(),
+                'total_warnings' => $user->userWarnings()->count(),
+                'is_banned' => $user->banned,
+                'is_suspended' => $user->isSuspended(),
+                'suspended_until' => $user->suspended_until,
+                'suspension_reason' => $user->suspension_reason,
+                'banned_reason' => $user->banned_reason
+            ]
+        ]);
+    }
+
+    /**
+     * Assign role to user
+     */
+    public function assignRole(Request $request, $id)
+    {
+        // Only admins can assign roles
+        if (Auth::user()->role !== 'admin') {
+            return response()->json(['message' => 'Only admins can assign/change roles'], 403);
+        }
+
+        $validated = $request->validate([
+            'role' => 'required|in:member,leader,moderator,admin'
+        ]);
+
+        $user = User::findOrFail($id);
+
+        // Prevent changing admin role
+        $adminEmails = ['admin@au.edu', 'studyhub.studygroupfinder@gmail.com'];
+        if (in_array($user->email, $adminEmails) && $validated['role'] !== 'admin') {
+            return response()->json(['message' => 'Cannot change admin account role'], 403);
+        }
+
+        $oldRole = $user->role;
+        $user->role = $validated['role'];
+        $user->save();
+
+        // Send notification
+        Notification::create([
+            'user_id' => $user->id,
+            'type' => 'role_changed',
+            'data' => [
+                'message' => "Your role has been changed from {$oldRole} to {$validated['role']}",
+                'old_role' => $oldRole,
+                'new_role' => $validated['role']
+            ]
+        ]);
+
+        // Send email notification if user's email is verified
+        if ($user->email_verified_at) {
+            try {
+                Mail::to($user->email)->send(new RoleChangedMail(
+                    $user,
+                    $oldRole,
+                    $validated['role'],
+                    Auth::user()->name
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send role change email: ' . $e->getMessage());
+            }
+        }
+
+        // Clear caches
+        $this->clearAdminCaches();
+
+        return response()->json([
+            'message' => 'User role updated successfully',
+            'user' => $user
+        ]);
+    }
+
+    /**
+     * Suspend user temporarily
+     */
+    public function suspendUser(Request $request, $id)
+    {
+        try {
+            $validated = $request->validate([
+                'duration_days' => 'required|integer|min:1|max:365',
+                'reason' => 'nullable|string|max:1000'
+            ]);
+
+            $user = User::findOrFail($id);
+
+            // Moderators cannot suspend admins/moderators
+            if (Auth::user()->role === 'moderator' && in_array($user->role, ['admin', 'moderator'])) {
+                return response()->json(['message' => 'Moderators cannot suspend admins or moderators'], 403);
+            }
+
+            // Prevent suspending admin
+            $adminEmails = ['admin@au.edu', 'studyhub.studygroupfinder@gmail.com'];
+            if (in_array($user->email, $adminEmails)) {
+                return response()->json(['message' => 'Cannot suspend admin account'], 403);
+            }
+
+            $user->suspended_until = now()->addDays($validated['duration_days']);
+            if (isset($validated['reason'])) {
+                $user->suspension_reason = $validated['reason'];
+            }
+            $user->save();
+
+            // Revoke all tokens to immediately log out the user
+            $user->tokens()->delete();
+
+            // Prepare notification data
+            $notificationData = [
+                'message' => "Your account has been suspended for {$validated['duration_days']} days",
+                'suspended_until' => $user->suspended_until->toDateTimeString(),
+                'duration_days' => $validated['duration_days']
+            ];
+
+            // Only include reason if admin provided one
+            if (isset($validated['reason']) && !empty($validated['reason'])) {
+                $notificationData['reason'] = $validated['reason'];
+            }
+
+            // Send notification
+            Notification::create([
+                'user_id' => $user->id,
+                'type' => 'user_suspended',
+                'data' => $notificationData
+            ]);
+
+            // Send suspension email if user's email is verified
+            if ($user->email_verified_at) {
+                try {
+                    $emailReason = $validated['reason'] ?? "Your account has been suspended for {$validated['duration_days']} days";
+                    Mail::to($user->email)->send(new UserSuspendedMail(
+                        $user,
+                        $user->suspended_until->format('F j, Y g:i A'),
+                        $emailReason,
+                        Auth::user()->name
+                    ));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send suspension email: ' . $e->getMessage());
+                }
+            }
+
+            // Clear caches
+            $this->clearAdminCaches();
+
+            return response()->json([
+                'message' => 'User suspended successfully',
+                'user' => $user
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Failed to suspend user: ' . $e->getMessage(), [
+                'user_id' => $id,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to suspend user',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reset user password (generates a temporary password)
+     */
+    public function resetPassword($id)
+    {
+        $user = User::findOrFail($id);
+
+        // Moderators cannot reset passwords for admins/moderators
+        if (Auth::user()->role === 'moderator' && in_array($user->role, ['admin', 'moderator'])) {
+            return response()->json(['message' => 'Moderators cannot reset passwords for admins or moderators'], 403);
+        }
+
+        // Generate temporary password
+        $tempPassword = 'Temp' . rand(10000, 99999) . '!';
+        $user->password = Hash::make($tempPassword);
+        $user->save();
+
+        // Send notification
+        Notification::create([
+            'user_id' => $user->id,
+            'type' => 'password_reset',
+            'data' => [
+                'message' => 'Your password has been reset by an administrator',
+                'temp_password' => $tempPassword,
+                'note' => 'Please change your password after logging in'
+            ]
+        ]);
+
+        // Send email notification if user's email is verified
+        if ($user->email_verified_at) {
+            try {
+                Mail::to($user->email)->send(new PasswordResetByAdminMail(
+                    $user,
+                    $tempPassword,
+                    Auth::user()->name
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send password reset email: ' . $e->getMessage());
+            }
+        }
+
+        return response()->json([
+            'message' => 'Password reset successfully',
+            'temp_password' => $tempPassword,
+            'note' => 'Temporary password has been sent to user via notification'
+        ]);
     }
 }

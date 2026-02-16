@@ -5,7 +5,12 @@ Hello {{ $userName }},
 
 Unfortunately, your request to join **"{{ $groupName }}"** was not approved at this time.
 
+@if($rejectionReason)
+**Reason from group leader:**
+{{ $rejectionReason }}
+@else
 The group leader may have capacity constraints or specific requirements. Feel free to explore other study groups that might be a good fit!
+@endif
 
 <x-mail::button :url="config('app.url')">
 Browse Other Groups

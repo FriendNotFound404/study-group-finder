@@ -69,6 +69,9 @@ const GroupsPage: React.FC = () => {
   const [rescheduleLocation, setRescheduleLocation] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [showCancelReasonModal, setShowCancelReasonModal] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellingEvent, setCancellingEvent] = useState<any | null>(null);
 
   // Edit Group State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -547,17 +550,34 @@ const GroupsPage: React.FC = () => {
     }
   };
 
-  const handleDeleteMeeting = async (eventId: string) => {
-    if (!confirm('Delete this meeting? This cannot be undone.')) return;
-    setActionLoading(eventId);
+  const handleDeleteMeeting = (event: any) => {
+    setCancellingEvent(event);
+    setShowCancelReasonModal(true);
+  };
+
+  const handleCancelMeetingWithReason = async (reason?: string) => {
+    if (!cancellingEvent) return;
+
+    setActionLoading(cancellingEvent.id);
+    setShowCancelReasonModal(false);
+
     try {
-      await apiService.deleteEvent(eventId);
+      await apiService.deleteEvent(cancellingEvent.id, reason);
       if (activeGroupId) await fetchGroupEvents(activeGroupId);
+      alert('Meeting cancelled successfully.');
     } catch (err) {
-      alert('Failed to delete meeting.');
+      alert('Failed to cancel meeting.');
     } finally {
       setActionLoading(null);
+      setCancellingEvent(null);
+      setCancellationReason('');
     }
+  };
+
+  const handleCancelCancellation = () => {
+    setShowCancelReasonModal(false);
+    setCancellingEvent(null);
+    setCancellationReason('');
   };
 
   const handleRescheduleMeeting = async () => {
@@ -1460,7 +1480,7 @@ const GroupsPage: React.FC = () => {
 
                             {/* Cancel */}
                             <button
-                              onClick={() => handleDeleteMeeting(event.id)}
+                              onClick={() => handleDeleteMeeting(event)}
                               disabled={actionLoading === event.id}
                               className="p-2 text-red-400 hover:bg-red-50 hover:text-red-500 rounded-lg transition-all"
                               title="Cancel"
@@ -1593,6 +1613,67 @@ const GroupsPage: React.FC = () => {
                   {actionLoading === rescheduleEvent.id ? <Loader2 size={14} className="animate-spin" /> : 'Reschedule'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Meeting Reason Modal */}
+      {showCancelReasonModal && cancellingEvent && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+
+            {/* Header */}
+            <div className="bg-red-500 p-8 text-white">
+              <h3 className="text-2xl font-black tracking-tight">Cancel Meeting</h3>
+              <p className="text-red-100 text-sm font-bold mt-1">{cancellingEvent.title}</p>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4">
+              <p className="text-slate-700 font-semibold text-sm">
+                Would you like to provide a reason for cancelling this meeting? This will be sent to all group members.
+              </p>
+
+              <div>
+                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">
+                  Cancellation Reason (Optional)
+                </label>
+                <textarea
+                  value={cancellationReason}
+                  onChange={(e) => setCancellationReason(e.target.value)}
+                  placeholder="e.g., Postponed due to schedule conflict, Will reschedule for next week, etc."
+                  rows={4}
+                  className="w-full px-4 py-3 border-2 border-slate-300 rounded-xl focus:border-red-400 focus:outline-none font-semibold text-sm resize-none"
+                  maxLength={500}
+                />
+                <p className="text-xs text-slate-400 mt-1 font-semibold">
+                  {cancellationReason.length}/500 characters
+                </p>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="p-6 bg-slate-50 border-t border-slate-200 flex gap-3">
+              <button
+                onClick={handleCancelCancellation}
+                className="flex-1 px-6 py-3 bg-slate-300 text-slate-700 rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-400 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleCancelMeetingWithReason()}
+                className="flex-1 px-6 py-3 bg-slate-500 text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-600 transition-all"
+              >
+                Skip & Cancel
+              </button>
+              <button
+                onClick={() => handleCancelMeetingWithReason(cancellationReason.trim() || undefined)}
+                disabled={cancellationReason.trim().length === 0}
+                className="flex-1 px-6 py-3 bg-red-500 text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Send & Cancel
+              </button>
             </div>
           </div>
         </div>

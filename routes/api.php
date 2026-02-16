@@ -11,6 +11,7 @@ use App\Http\Controllers\API\ProfileController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
 use App\Http\Controllers\API\RatingController;
+use App\Http\Controllers\API\ReportsController;
 
 // Auth
 Route::post('/register', [AuthController::class, 'register']);
@@ -19,12 +20,13 @@ Route::post('/login', [AuthController::class, 'login']);
 // Email Verification (public route for clicking email link)
 Route::get('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])->name('verification.verify');
 
-// Admin Notifications (public access for admin panel)
-Route::get('/admin/notifications', [AdminController::class, 'getNotifications']);
-Route::get('/admin/notifications/unread-count', [AdminController::class, 'getUnreadCount']);
-Route::post('/admin/notifications/mark-read', [AdminController::class, 'markNotificationsAsRead']);
-
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', \App\Http\Middleware\SuspendedUserMiddleware::class])->group(function () {
+    // Admin Notifications (requires authentication)
+    Route::middleware('admin')->group(function () {
+        Route::get('/admin/notifications', [AdminController::class, 'getNotifications']);
+        Route::get('/admin/notifications/unread-count', [AdminController::class, 'getUnreadCount']);
+        Route::post('/admin/notifications/mark-read', [AdminController::class, 'markNotificationsAsRead']);
+    });
     Route::post('/logout', [AuthController::class, 'logout']);
 
     // Email Verification (authenticated routes)
@@ -60,9 +62,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/feedback', [FeedbackController::class, 'index']);
     Route::post('/feedback', [FeedbackController::class, 'store']);
 
+    // Reports (user-facing)
+    Route::post('/reports', [ReportsController::class, 'store']);
+    Route::get('/reports/my-reports', [ReportsController::class, 'myReports']);
+
     // Calendar
     Route::get('/calendar/events', [CalendarController::class, 'index']);
     Route::post('/calendar/events', [CalendarController::class, 'store']);
+    Route::put('/calendar/events/{id}', [CalendarController::class, 'update']);
     Route::delete('/calendar/events/{id}', [CalendarController::class, 'destroy']);
 
     // Profile
@@ -88,13 +95,29 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // User Management
         Route::get('/users', [AdminController::class, 'getUsers']);
+        Route::get('/users/{id}/profile', [AdminController::class, 'getUserProfile']);
         Route::put('/users/{id}', [AdminController::class, 'updateUser']);
+        Route::post('/users/{id}/assign-role', [AdminController::class, 'assignRole']);
+        Route::post('/users/{id}/suspend', [AdminController::class, 'suspendUser']);
+        Route::post('/users/{id}/reset-password', [AdminController::class, 'resetPassword']);
         Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
 
         // Group Management
         Route::get('/groups', [AdminController::class, 'getGroups']);
         Route::put('/groups/{id}', [AdminController::class, 'updateGroup']);
+        Route::post('/groups/{id}/transfer-ownership', [StudyGroupController::class, 'transferOwnership']);
+        Route::post('/groups/{id}/approve', [AdminController::class, 'approveGroup']);
+        Route::post('/groups/{id}/reject', [AdminController::class, 'rejectGroup']);
+        Route::post('/groups/{id}/force-archive', [StudyGroupController::class, 'forceArchive']);
+        Route::get('/groups/{id}/chat-logs', [StudyGroupController::class, 'getChatLogs']);
         Route::delete('/groups/{id}', [AdminController::class, 'deleteGroup']);
+
+        // Reports Management
+        Route::get('/reports', [ReportsController::class, 'index']);
+        Route::get('/reports/statistics', [ReportsController::class, 'statistics']);
+        Route::get('/reports/{id}', [ReportsController::class, 'show']);
+        Route::post('/reports/{id}/update-priority', [ReportsController::class, 'updatePriority']);
+        Route::post('/reports/{id}/resolve', [ReportsController::class, 'resolve']);
 
         // Feedback Management
         Route::get('/feedback', [AdminController::class, 'getFeedback']);
@@ -104,5 +127,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/users/{id}/warn', [AdminController::class, 'warnUser']);
         Route::post('/users/{id}/ban', [AdminController::class, 'banUser']);
         Route::post('/users/{id}/unban', [AdminController::class, 'unbanUser']);
+        Route::post('/users/{id}/unsuspend', [AdminController::class, 'unsuspendUser']);
+
+        // Events Management
+        Route::get('/events', [AdminController::class, 'getEvents']);
+        Route::put('/events/{id}', [AdminController::class, 'updateEvent']);
+        Route::delete('/events/{id}', [AdminController::class, 'deleteEvent']);
+
+        // Ratings Management
+        Route::get('/ratings', [AdminController::class, 'getRatings']);
+        Route::delete('/ratings/{id}', [AdminController::class, 'deleteRating']);
     });
 });

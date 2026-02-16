@@ -24,12 +24,17 @@ const ReportPage: React.FC = () => {
   const loadReports = async () => {
     setLoading(true);
     try {
-      const data = await apiService.getFeedback();
-      console.log("Raw reports data from backend:", data);
-      if (data.length > 0) {
-        console.log("First report structure:", data[0]);
+      const response = await apiService.getMyReports();
+      console.log("Raw reports data from backend:", response);
+
+      // Handle paginated response
+      const reportsData = (response as any).data || response;
+
+      if (Array.isArray(reportsData) && reportsData.length > 0) {
+        console.log("First report structure:", reportsData[0]);
       }
-      setReports(data as any);
+
+      setReports(reportsData as any);
     } catch (err) {
       console.error("Failed to load reports", err);
     } finally {
@@ -72,12 +77,34 @@ const ReportPage: React.FC = () => {
 
     setSubmitting(true);
     try {
-      // Send as feedback format for backend compatibility
-      await apiService.submitFeedback({
-        group_name: `Report: ${selectedUser.name}`,
-        rating: newReport.severity,
-        text: `Reason: ${newReport.reason}\n\nDetails: ${newReport.description}\n\nReported User ID: ${selectedUser.id}\nReported User Email: ${selectedUser.email}`
+      // Map frontend reason to backend reason format
+      const reasonMap: Record<string, string> = {
+        'Harassment': 'harassment',
+        'Inappropriate Content': 'inappropriate_content',
+        'Spam': 'spam',
+        'Impersonation': 'fake_profile',
+        'Hate Speech': 'harassment',
+        'Violence': 'harassment',
+        'Privacy Violation': 'inappropriate_content',
+        'Other': 'other'
+      };
+
+      // Map severity (1-5) to priority
+      const priorityMap: Record<number, string> = {
+        1: 'low',
+        2: 'low',
+        3: 'medium',
+        4: 'high',
+        5: 'urgent'
+      };
+
+      await apiService.submitReport({
+        reported_user_id: selectedUser.id,
+        reason: reasonMap[newReport.reason] || 'other',
+        description: newReport.description,
+        priority: priorityMap[newReport.severity] || 'medium'
       });
+
       setNewReport({ severity: 3, description: '', reason: '' });
       setSelectedUser(null);
       alert("Report submitted successfully. Admin will review it shortly.");
@@ -287,52 +314,72 @@ const ReportPage: React.FC = () => {
                   <p className="font-bold uppercase tracking-widest text-xs">No reports submitted yet</p>
                 </div>
               )}
-                {reports.map(r => {
-                  // Debug logging
-                  console.log("Parsing report:", r);
+                {reports.map((r: any) => {
+                  // Map reason to display text
+                  const reasonMap: Record<string, string> = {
+                    'spam': 'Spam or Advertising',
+                    'harassment': 'Harassment or Bullying',
+                    'inappropriate_content': 'Inappropriate Content',
+                    'fake_profile': 'Impersonation',
+                    'other': 'Other Violation'
+                  };
 
-                  // Parse the stored feedback format (backend returns 'comment' field, not 'text')
-                  const reportText = (r as any).comment || r.text || '';
-                  console.log("Report text:", reportText);
-                  console.log("Group name:", r.group_name);
+                  // Map priority to severity for badge
+                  const priorityToSeverity: Record<string, number> = {
+                    'low': 2,
+                    'medium': 3,
+                    'high': 4,
+                    'urgent': 5
+                  };
 
-                  // Extract reported user name from group_name field (format: "Report: John Doe")
-                  let reportedUserName = 'Unknown User';
-                  if (r.group_name && r.group_name.startsWith('Report: ')) {
-                    reportedUserName = r.group_name.replace('Report: ', '').trim();
-                  }
-                  console.log("Reported user name:", reportedUserName);
-
-                  // Parse the comment to extract reason and description
-                  const textParts = reportText.split('\n\n');
-                  console.log("Text parts:", textParts);
-                  const reason = textParts[0]?.replace('Reason: ', '').trim() || 'Not specified';
-                  const description = textParts[1]?.replace('Details: ', '').trim() || reportText.trim() || 'No description provided';
-                  console.log("Parsed reason:", reason);
-                  console.log("Parsed description:", description);
+                  // Map status to badge color
+                  const getStatusBadge = (status: string) => {
+                    const configs: Record<string, { bg: string; text: string }> = {
+                      'pending': { bg: 'bg-yellow-100', text: 'text-yellow-700' },
+                      'investigating': { bg: 'bg-blue-100', text: 'text-blue-700' },
+                      'resolved': { bg: 'bg-green-100', text: 'text-green-700' },
+                      'dismissed': { bg: 'bg-gray-100', text: 'text-gray-700' }
+                    };
+                    const config = configs[status] || configs.pending;
+                    return (
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${config.bg} ${config.text} uppercase`}>
+                        {status}
+                      </span>
+                    );
+                  };
 
                   return (
                     <div key={r.id} className="p-6 bg-slate-50 border border-slate-200 rounded-2xl hover:shadow-lg hover:border-slate-300 transition-all relative">
-                      <div className="absolute top-4 right-4">
-                        {getSeverityBadge(r.rating || 3)}
+                      <div className="absolute top-4 right-4 flex gap-2">
+                        {getSeverityBadge(priorityToSeverity[r.priority] || 3)}
+                        {getStatusBadge(r.status)}
                       </div>
                       <div className="flex items-start gap-3 mb-4">
                         <div className="w-12 h-12 bg-red-100 text-red-600 rounded-xl flex items-center justify-center shrink-0">
                           <UserIcon size={20} />
                         </div>
-                        <div className="flex-1 min-w-0 pr-20">
-                          <h4 className="font-bold text-slate-900 text-base mb-1">{reportedUserName}</h4>
+                        <div className="flex-1 min-w-0 pr-32">
+                          <h4 className="font-bold text-slate-900 text-base mb-1">
+                            {r.reported_user?.name || 'Unknown User'}
+                          </h4>
+                          <p className="text-xs text-slate-500 mb-1">{r.reported_user?.email || ''}</p>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                             {new Date(r.created_at).toLocaleDateString()}
                           </p>
                           <div className="mt-2 inline-block px-2 py-1 bg-white rounded-lg border border-slate-200">
-                            <p className="text-xs font-bold text-slate-600">{reason}</p>
+                            <p className="text-xs font-bold text-slate-600">{reasonMap[r.reason] || r.reason}</p>
                           </div>
                         </div>
                       </div>
                       <div className="bg-white rounded-xl p-4 border border-slate-200">
-                        <p className="text-slate-700 text-sm leading-relaxed">{description}</p>
+                        <p className="text-slate-700 text-sm leading-relaxed">{r.description}</p>
                       </div>
+                      {r.resolution_notes && (
+                        <div className="mt-3 bg-green-50 rounded-xl p-4 border border-green-200">
+                          <p className="text-xs font-bold text-green-700 uppercase mb-1">Resolution</p>
+                          <p className="text-sm text-green-900">{r.resolution_notes}</p>
+                        </div>
+                      )}
                     </div>
                   );
               })}

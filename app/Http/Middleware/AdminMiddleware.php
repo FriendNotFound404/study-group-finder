@@ -15,9 +15,11 @@ class AdminMiddleware
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        // Check if user is admin (email = admin@au.edu)
-        if ($user->email !== 'admin@au.edu') {
-            return response()->json(['message' => 'Unauthorized. Admin access only.'], 403);
+        // Check if user has admin or moderator role
+        if (!in_array($user->role, ['admin', 'moderator'])) {
+            return response()->json([
+                'message' => 'Unauthorized. Admin or moderator access only.'
+            ], 403);
         }
 
         return $next($request);

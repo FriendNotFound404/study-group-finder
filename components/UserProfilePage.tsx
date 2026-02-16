@@ -42,7 +42,7 @@ const UserProfilePage: React.FC = () => {
 
   const statCards = [
     { label: 'Groups Joined', value: stats?.groups_joined || '0', icon: <Users className="text-orange-500" />, color: 'text-slate-900' },
-    { label: 'Study Sessions', value: stats?.study_hours || '0', icon: <Book className="text-blue-500" />, color: 'text-slate-900' },
+    { label: 'Meetings', value: stats?.study_hours || '0', icon: <Book className="text-blue-500" />, color: 'text-slate-900' },
     warningStatus,
     { label: 'Karma Points', value: stats?.karma || '0', icon: <Award className="text-emerald-500" />, color: 'text-slate-900' },
   ];

@@ -8,6 +8,7 @@ use App\Models\StudyGroup;
 use App\Models\Notification;
 use App\Services\KarmaService;
 use App\Mail\EventCreatedMail;
+use App\Mail\EventCancelledMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
@@ -27,6 +28,16 @@ class CalendarController extends Controller {
     }
 
     public function store(Request $request) {
+        $user = Auth::user();
+
+        // Check if email is verified
+        if (!$user->email_verified_at) {
+            return response()->json([
+                'message' => 'Please verify your email address to create events. Check your inbox for the verification link.',
+                'requires_verification' => true
+            ], 403);
+        }
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'type' => 'required|string',
@@ -132,12 +143,61 @@ class CalendarController extends Controller {
         ]);
     }
 
-    public function destroy($id) {
+    public function destroy(Request $request, $id) {
         $event = Event::findOrFail($id);
-        
+
         // Only creator can delete
         if ($event->user_id !== Auth::id()) {
             return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Get optional cancellation reason from request body
+        $cancellationReason = $request->input('reason');
+
+        // If this is a group event, notify all members before deleting
+        if ($event->group_id) {
+            $group = StudyGroup::find($event->group_id);
+            if ($group) {
+                $members = $group->members()->where('users.id', '!=', Auth::id())->get();
+                $eventTime = date('M j, Y g:i A', strtotime($event->start_time));
+
+                // Create notification message
+                $notificationMessage = "Meeting cancelled for '{$group->name}': {$event->title} (scheduled for {$eventTime})";
+                if ($cancellationReason) {
+                    $notificationMessage .= " - Reason: {$cancellationReason}";
+                }
+
+                foreach ($members as $member) {
+                    // Create in-app notification
+                    Notification::create([
+                        'user_id' => $member->id,
+                        'type' => 'event',
+                        'data' => [
+                            'group_id' => $group->id,
+                            'group_name' => $group->name,
+                            'event_title' => $event->title,
+                            'message' => $notificationMessage,
+                            'cancelled' => true,
+                            'reason' => $cancellationReason
+                        ]
+                    ]);
+
+                    // Send email notification if member's email is verified
+                    if ($member->email_verified_at) {
+                        try {
+                            Mail::to($member->email)->send(new EventCancelledMail(
+                                $member->name,
+                                $group->name,
+                                $event->title,
+                                $eventTime,
+                                $cancellationReason
+                            ));
+                        } catch (\Exception $e) {
+                            Log::error('Failed to send event cancellation email: ' . $e->getMessage());
+                        }
+                    }
+                }
+            }
         }
 
         $event->delete();

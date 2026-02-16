@@ -13,22 +13,38 @@ class AdminUserSeeder extends Seeder
      */
     public function run(): void
     {
-        // Check if admin already exists
-        $existingAdmin = User::where('email', 'admin@au.edu')->first();
-
-        if (!$existingAdmin) {
-            User::create([
+        $admins = [
+            [
                 'name' => 'Admin',
                 'email' => 'admin@au.edu',
                 'password' => Hash::make('admin123'),
+                'role' => 'admin',
                 'major' => 'Administration',
                 'bio' => 'System Administrator',
                 'location' => 'AU Campus',
-            ]);
+            ],
+            [
+                'name' => 'StudyHub Admin',
+                'email' => 'studyhub.studygroupfinder@gmail.com',
+                'password' => Hash::make('studygroupfinder123'),
+                'role' => 'admin',
+                'major' => 'Administration',
+                'bio' => 'StudyHub System Administrator',
+                'location' => 'AU Campus',
+            ],
+        ];
 
-            $this->command->info('Admin user created successfully!');
-        } else {
-            $this->command->info('Admin user already exists.');
+        foreach ($admins as $adminData) {
+            $existingAdmin = User::where('email', $adminData['email'])->first();
+
+            if (!$existingAdmin) {
+                User::create($adminData);
+                $this->command->info('Admin user created: ' . $adminData['email']);
+            } else {
+                // Update existing admin to have admin role
+                $existingAdmin->update(['role' => 'admin']);
+                $this->command->info('Admin user already exists (role updated): ' . $adminData['email']);
+            }
         }
     }
 }
