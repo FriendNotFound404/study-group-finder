@@ -63,7 +63,7 @@ const LandingPage: React.FC = () => {
             <div className="absolute -bottom-8 -left-8 bg-white p-6 rounded-3xl shadow-xl border border-slate-100 animate-bounce duration-[3000ms]">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Live Now</span>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Join Now/span>
               </div>
               <p className="font-bold text-slate-900">Calc III Study Room</p>
               <div className="flex mt-3">
