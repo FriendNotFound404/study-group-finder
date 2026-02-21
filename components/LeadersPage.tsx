@@ -67,24 +67,6 @@ const LeadersPage: React.FC = () => {
             <Info size={24} className="text-white" />
           </button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
-          <div className="bg-white/10 backdrop-blur rounded-2xl p-6">
-            <div className="flex items-center gap-3 mb-2">
-              <Award className="text-orange-200" size={24} />
-              <p className="text-sm font-bold text-orange-100 uppercase tracking-widest">Total Contributors</p>
-            </div>
-            <p className="text-3xl font-black">{leaders.length}</p>
-          </div>
-          <div className="bg-white/10 backdrop-blur rounded-2xl p-6">
-            <div className="flex items-center gap-3 mb-2">
-              <TrendingUp className="text-orange-200" size={24} />
-              <p className="text-sm font-bold text-orange-100 uppercase tracking-widest">Total Karma</p>
-            </div>
-            <p className="text-3xl font-black">
-              {leaders.reduce((sum, l) => sum + l.karma_points, 0).toLocaleString()}
-            </p>
-          </div>
-        </div>
       </div>
 
       {/* Error State */}
@@ -237,6 +219,13 @@ const LeadersPage: React.FC = () => {
                   </div>
                   <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
                     <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-black text-emerald-600 uppercase tracking-widest">Gain Member</p>
+                      <span className="text-emerald-600 font-black">+15</span>
+                    </div>
+                    <p className="text-sm text-slate-600">Leader gains a new member</p>
+                  </div>
+                  <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
+                    <div className="flex items-center justify-between mb-2">
                       <p className="text-xs font-black text-emerald-600 uppercase tracking-widest">Create Event</p>
                       <span className="text-emerald-600 font-black">+15</span>
                     </div>
@@ -314,6 +303,13 @@ const LeadersPage: React.FC = () => {
                       <span className="text-red-600 font-black">-10</span>
                     </div>
                     <p className="text-sm text-slate-600">Short suspension period</p>
+                  </div>
+                  <div className="bg-red-50 rounded-xl p-4 border border-red-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-black text-red-600 uppercase tracking-widest">Lose Member</p>
+                      <span className="text-red-600 font-black">-10</span>
+                    </div>
+                    <p className="text-sm text-slate-600">Leader loses a member</p>
                   </div>
                   <div className="bg-red-50 rounded-xl p-4 border border-red-100">
                     <div className="flex items-center justify-between mb-2">

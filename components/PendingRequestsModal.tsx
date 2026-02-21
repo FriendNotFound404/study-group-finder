@@ -119,20 +119,7 @@ const PendingRequestsModal: React.FC<PendingRequestsModalProps> = ({
 
         {/* Content */}
         <div className="p-8 max-h-[500px] overflow-y-auto">
-          {/* TEST BUTTONS - These should ALWAYS show */}
-          <div className="mb-4 p-4 bg-yellow-100 border-2 border-yellow-500 rounded-xl">
-            <p className="text-xs font-bold mb-2">TEST: Can you see these buttons?</p>
-            <div className="flex gap-2">
-              <button className="px-4 py-2 bg-emerald-500 text-white rounded font-bold">
-                TEST APPROVE
-              </button>
-              <button className="px-4 py-2 bg-red-500 text-white rounded font-bold">
-                TEST REJECT
-              </button>
-            </div>
-          </div>
-
-          {loading ? (
+{loading ? (
             <div className="flex flex-col items-center justify-center py-16 space-y-4">
               <Loader2 size={48} className="animate-spin text-orange-500" />
               <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Loading requests...</p>
@@ -142,12 +129,10 @@ const PendingRequestsModal: React.FC<PendingRequestsModalProps> = ({
               <Users size={48} className="mx-auto text-slate-200" />
               <p className="text-slate-400 font-bold">No pending requests</p>
               <p className="text-xs text-slate-400">When users request to join, they'll appear here.</p>
-              <p className="text-xs text-slate-600 mt-4 font-mono">Debug: requests.length = {requests.length}</p>
             </div>
           ) : (
             <div className="space-y-4">
-              <p className="text-xs text-slate-600 mb-4 font-mono">Debug: Found {requests.length} pending request(s)</p>
-              {requests.map((request, index) => (
+              {requests.map((request) => (
                 <div
                   key={request.id}
                   className="bg-slate-50 border-2 border-slate-300 rounded-2xl p-6 space-y-4"
@@ -175,7 +160,6 @@ const PendingRequestsModal: React.FC<PendingRequestsModalProps> = ({
                           Requested {formatTimeAgo(request.requested_at)}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 mt-2 font-mono">User ID: {request.id}</p>
                     </div>
                   </div>
 

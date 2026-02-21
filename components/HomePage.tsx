@@ -7,6 +7,7 @@ import { geminiService } from '../services/geminiService';
 import { apiService } from '../services/apiService';
 import GroupDetailModal from './GroupDetailModal';
 import StarRating from './StarRating';
+import { containsBadWords } from '../utils/badWords';
 
 const HomePage: React.FC = () => {
   // All groups state
@@ -27,7 +28,7 @@ const HomePage: React.FC = () => {
   const [locationFilter, setLocationFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [contentFilter, setContentFilter] = useState<'all' | 'groups' | 'users'>('all');
-  const [ratingFilter, setRatingFilter] = useState('');
+  const [sortBy, setSortBy] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [leaderFilter, setLeaderFilter] = useState('');
 
@@ -73,14 +74,14 @@ const HomePage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Fetch users when there's a search query
+    // Fetch users when there's a search query (min 2 chars)
     const fetchUsers = async () => {
-      if (searchQuery) {
+      if (searchQuery && searchQuery.length >= 2) {
         try {
           const users = await apiService.searchUsers(searchQuery);
-          setSearchedUsers(users);
-        } catch (err) {
-          console.error('Failed to search users:', err);
+          setSearchedUsers(Array.isArray(users) ? users : []);
+        } catch (err: any) {
+          console.error('Failed to search users:', err?.message || err);
           setSearchedUsers([]);
         }
       } else {
@@ -153,13 +154,6 @@ const HomePage: React.FC = () => {
       const matchesLocation = !locationFilter || g.location === locationFilter;
       const matchesStatus = !statusFilter || g.status === statusFilter;
 
-      // Rating filter: filter by minimum average of both group rating and leader rating
-      const matchesRating = !ratingFilter || (
-        g.avg_group_rating !== undefined &&
-        g.avg_leader_rating !== undefined &&
-        ((g.avg_group_rating + g.avg_leader_rating) / 2) >= parseFloat(ratingFilter)
-      );
-
       // Date filter: filter by creation date
       let matchesDate = true;
       if (dateFilter) {
@@ -175,19 +169,26 @@ const HomePage: React.FC = () => {
       // Leader filter: filter by group creator
       const matchesLeader = !leaderFilter || g.creator_name === leaderFilter;
 
-      return matchesSearch && matchesFaculty && matchesSubject && matchesLocation && matchesStatus && matchesRating && matchesDate && matchesLeader;
+      return matchesSearch && matchesFaculty && matchesSubject && matchesLocation && matchesStatus && matchesDate && matchesLeader;
     });
 
-    // Sort by creation date (most recent first) for "Recent Groups" view
-    // When in search/filter mode, also sort by relevance (members count)
-    const hasActiveFilters = searchQuery || facultyFilter || subjectFilter || locationFilter || statusFilter || ratingFilter || dateFilter || leaderFilter;
+    // Sort results
+    if (sortBy === 'most_rated') {
+      return results.sort((a, b) => (b.total_ratings || 0) - (a.total_ratings || 0));
+    }
+    if (sortBy === 'most_popular') {
+      return results.sort((a, b) => (b.members_count || 0) - (a.members_count || 0));
+    }
+
+    // Default: sort by creation date (most recent first); when filters active, sort by members count
+    const hasActiveFilters = searchQuery || facultyFilter || subjectFilter || locationFilter || statusFilter || dateFilter || leaderFilter;
     return results.sort((a, b) => {
       if (hasActiveFilters && b.members_count !== a.members_count) {
         return b.members_count - a.members_count;
       }
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
-  }, [groups, searchQuery, facultyFilter, subjectFilter, locationFilter, statusFilter, ratingFilter, dateFilter, leaderFilter]);
+  }, [groups, searchQuery, facultyFilter, subjectFilter, locationFilter, statusFilter, sortBy, dateFilter, leaderFilter]);
 
   const handleJoinLeave = async (id: string, currentlyMember: boolean, hasPendingRequest: boolean, groupStatus: GroupStatus) => {
     try {
@@ -261,6 +262,11 @@ const HomePage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const fieldsToCheck = [newGroup.subject, newGroup.faculty, newGroup.goal, newGroup.description, newGroup.location];
+    if (fieldsToCheck.some(f => containsBadWords(f))) {
+      alert('Your group content contains inappropriate language. Please revise and try again.');
+      return;
+    }
     try {
       await apiService.createGroup({
         name: newGroup.subject,
@@ -281,7 +287,7 @@ const HomePage: React.FC = () => {
     setLocationFilter('');
     setStatusFilter('');
     setContentFilter('all');
-    setRatingFilter('');
+    setSortBy('');
     setDateFilter('');
     setLeaderFilter('');
   };
@@ -330,7 +336,7 @@ const HomePage: React.FC = () => {
     statusFilter,
     searchQuery,
     contentFilter !== 'all' ? 'content' : '',
-    ratingFilter,
+    sortBy,
     dateFilter,
     leaderFilter
   ].filter(Boolean).length;
@@ -360,7 +366,7 @@ const HomePage: React.FC = () => {
             </button>
             <p className="text-xs font-semibold text-slate-400">{group.subject}</p>
             <p className="text-[10px] font-semibold text-slate-500">Led by {group.creator_name}</p>
-            {group.total_ratings && group.total_ratings > 0 && (
+            {(group.total_ratings ?? 0) > 0 && (
               <div className="flex items-center gap-2 mt-1">
                 <StarRating
                   value={
@@ -554,18 +560,16 @@ const HomePage: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Average Rating</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Sort By</label>
               <div className="relative">
                 <select
                   className="w-full appearance-none px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-orange-500 transition-all cursor-pointer pr-10"
-                  value={ratingFilter}
-                  onChange={e => setRatingFilter(e.target.value)}
+                  value={sortBy}
+                  onChange={e => setSortBy(e.target.value)}
                 >
-                  <option value="">All Ratings</option>
-                  <option value="4">4+ Stars</option>
-                  <option value="3">3+ Stars</option>
-                  <option value="2">2+ Stars</option>
-                  <option value="1">1+ Stars</option>
+                  <option value="">Default</option>
+                  <option value="most_rated">Most Rated</option>
+                  <option value="most_popular">Most Popular</option>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
               </div>
@@ -757,7 +761,7 @@ const HomePage: React.FC = () => {
                       </button>
                       <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{group.subject}</p>
                       <p className="text-xs font-semibold text-slate-500 mb-3">Led by {group.creator_name}</p>
-                      {group.total_ratings && group.total_ratings > 0 && (
+                      {(group.total_ratings ?? 0) > 0 && (
                         <div className="flex items-center gap-2 mb-3">
                           <StarRating value={group.avg_group_rating || 0} readonly size="sm" />
                           <span className="text-[10px] text-slate-400 font-bold">({group.total_ratings})</span>
@@ -943,14 +947,14 @@ const HomePage: React.FC = () => {
                         <p className={`text-sm font-bold ${isFull ? 'text-amber-600' : 'text-slate-700'}`}>{group.members_count} / {group.max_members}</p>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><MapPin size={12}/> Primary Hub</p>
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><MapPin size={12}/> Location</p>
                         <p className="text-sm font-bold text-slate-700 truncate">{group.location}</p>
                       </div>
                       <div className="space-y-1">
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">Faculty</p>
                         <p className="text-sm font-bold text-slate-700 truncate">{group.faculty}</p>
                       </div>
-                      {group.total_ratings && group.total_ratings > 0 && (
+                      {(group.total_ratings ?? 0) > 0 && (
                         <>
                           <div className="space-y-1">
                             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Group Rating</p>
@@ -974,36 +978,31 @@ const HomePage: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => handleJoinLeave(group.id, !!group.is_member, !!group.has_pending_request, group.status)}
-                        disabled={(!canJoin && !group.is_member && !group.has_pending_request)}
-                        className={`flex-1 md:flex-none px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
-                          group.is_member
-                            ? 'bg-white border-2 border-red-100 text-red-500 hover:bg-red-50'
-                            : group.has_pending_request
-                              ? 'bg-amber-50 border-2 border-amber-200 text-amber-600'
-                            : isArchived ? 'bg-slate-200 text-slate-400'
-                            : isClosed ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-xl shadow-amber-100'
-                            : 'bg-orange-500 text-white hover:bg-orange-600 shadow-xl shadow-orange-100'
-                        } disabled:opacity-80`}
-                      >
-                        {group.is_member
-                          ? 'Leave Group'
+                    <button
+                      onClick={() => handleJoinLeave(group.id, !!group.is_member, !!group.has_pending_request, group.status)}
+                      disabled={(!canJoin && !group.is_member && !group.has_pending_request)}
+                      className={`px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
+                        group.is_member
+                          ? 'bg-white border-2 border-red-100 text-red-500 hover:bg-red-50'
                           : group.has_pending_request
-                            ? 'Request Pending...'
-                          : isArchived
-                            ? 'Hub Archived'
-                          : isClosed
-                            ? 'Request to Join'
-                          : isFull
-                            ? 'Hub Full'
-                          : 'Join Group'}
-                      </button>
-                      <Link to={`/groups?group=${group.id}`} className="px-6 py-4 text-slate-400 hover:text-slate-900 font-black text-xs uppercase tracking-widest transition-colors">
-                        Workspace
-                      </Link>
-                    </div>
+                            ? 'bg-amber-50 border-2 border-amber-200 text-amber-600'
+                          : isArchived ? 'bg-slate-200 text-slate-400'
+                          : isClosed ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-xl shadow-amber-100'
+                          : 'bg-orange-500 text-white hover:bg-orange-600 shadow-xl shadow-orange-100'
+                      } disabled:opacity-80`}
+                    >
+                      {group.is_member
+                        ? 'Leave Group'
+                        : group.has_pending_request
+                          ? 'Request Pending...'
+                        : isArchived
+                          ? 'Hub Archived'
+                        : isClosed
+                          ? 'Request to Join'
+                        : isFull
+                          ? 'Hub Full'
+                        : 'Join Group'}
+                    </button>
                   </div>
                 );
                 })}

@@ -217,7 +217,7 @@ const AdminDashboard: React.FC = () => {
               <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center">
                 <Calendar size={24} className="text-purple-600" />
               </div>
-              <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Events</span>
+              <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Meetings</span>
             </div>
             <p className="text-3xl font-black text-slate-900">{stats?.total_events || 0}</p>
             <div className="flex items-center gap-2 mt-2">
@@ -496,9 +496,9 @@ const AdminDashboard: React.FC = () => {
                     <div className="flex flex-col items-end gap-1">
                       <div className="flex items-center gap-1">
                         <Star size={12} className="text-amber-500 fill-amber-500" />
-                        <span className="text-xs font-bold text-slate-700">{rating.group_rating.toFixed(1)}</span>
+                        <span className="text-xs font-bold text-slate-700">{rating.average_rating.toFixed(1)}</span>
                       </div>
-                      <span className="text-xs text-slate-400">Group</span>
+                      <span className="text-xs text-slate-400">Avg Rating</span>
                     </div>
                   </div>
                 ))
@@ -511,11 +511,11 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Recent Events */}
+          {/* Recent Meetings */}
           <div className="bg-white rounded-2xl border-2 border-slate-200 shadow-sm">
             <div className="p-6 border-b border-slate-100">
-              <h3 className="text-lg font-black text-slate-900">Recent Events</h3>
-              <p className="text-sm text-slate-500 font-medium">Latest scheduled events</p>
+              <h3 className="text-lg font-black text-slate-900">Recent Meetings</h3>
+              <p className="text-sm text-slate-500 font-medium">Latest scheduled meetings</p>
             </div>
             <div className="p-6 space-y-4">
               {stats?.recent_events && stats.recent_events.length > 0 ? (
@@ -541,7 +541,7 @@ const AdminDashboard: React.FC = () => {
               ) : (
                 <div className="text-center py-8">
                   <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500">No events yet</p>
+                  <p className="text-sm text-slate-500">No meetings yet</p>
                 </div>
               )}
             </div>

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { TrendingUp, Flame, Users, Trophy, BookOpen, Loader2, Search, User as UserIcon, Star } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { apiService } from '../services/apiService';
 import { StudyGroup } from '../types';
 import StarRating from './StarRating';
@@ -19,6 +19,13 @@ const DiscoverPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [activeTab, searchQuery]);
+
+  // Auto-switch to Users tab when search query is present
+  useEffect(() => {
+    if (searchQuery) {
+      setActiveTab('users');
+    }
+  }, [searchQuery]);
 
   const loadData = async () => {
     setLoading(true);
@@ -191,19 +198,19 @@ const DiscoverPage: React.FC = () => {
                     </tr>
                   )}
                   {filteredLeaders.map((user, idx) => (
-                    <tr key={user.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                    <tr key={user.id} className="border-b border-slate-50 hover:bg-orange-50/30 transition-colors cursor-pointer">
                       <td className="px-8 py-6">
                         <span className={`w-8 h-8 flex items-center justify-center rounded-lg font-bold text-sm ${idx === 0 && !searchQuery ? 'bg-orange-500 text-white shadow-lg shadow-orange-100' : 'bg-slate-100 text-slate-500'}`}>
                           #{idx + 1}
                         </span>
                       </td>
                       <td className="px-8 py-6">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center font-bold text-orange-600 border border-orange-100">
+                        <Link to={`/profile/${user.id}`} className="flex items-center gap-3 group">
+                          <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center font-bold text-orange-600 border border-orange-100 group-hover:scale-105 transition-transform">
                             {user.name[0]}
                           </div>
-                          <span className="font-bold text-slate-900">{user.name}</span>
-                        </div>
+                          <span className="font-bold text-slate-900 group-hover:text-orange-500 transition-colors">{user.name}</span>
+                        </Link>
                       </td>
                       <td className="px-8 py-6">
                         <span className="text-sm font-semibold text-slate-500">{user.major || 'Student'}</span>

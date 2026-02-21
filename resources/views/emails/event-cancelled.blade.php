@@ -71,7 +71,7 @@
 
         <p>Please check your calendar for any other scheduled meetings. You can also check the group chat for updates.</p>
 
-        <p>Best regards,<br>StudyGroupFinder Team</p>
+        <p>Best regards,<br>StudyHub</p>
     </div>
     <div class="footer">
         <p>You received this email because you are a member of {{ $groupName }}.</p>

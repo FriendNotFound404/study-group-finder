@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, UsersIcon, MessageSquare, AlertTriangle, BarChart3, Settings, LogOut, Shield, Menu, X, Bell, Calendar, Star } from 'lucide-react';
+import { LayoutDashboard, Users, UsersIcon, MessageSquare, AlertTriangle, BarChart3, Settings, LogOut, Shield, Menu, X, Bell, Calendar, Star, FileText, Sun, Moon } from 'lucide-react';
 import NotificationDropdown from '../NotificationDropdown';
 import { AppNotification } from '../../types';
 import { apiService } from '../../services/apiService';
+import { useTheme } from '../../contexts/ThemeContext';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -18,6 +19,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [adminUser, setAdminUser] = useState<{ name: string; role: string } | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     // Get admin user info from localStorage
@@ -131,9 +133,10 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { path: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/admin/users', icon: Users, label: 'User Management' },
     { path: '/admin/groups', icon: UsersIcon, label: 'Group Management' },
-    { path: '/admin/events', icon: Calendar, label: 'Events Management' },
+    { path: '/admin/events', icon: Calendar, label: 'Meetings Management' },
     { path: '/admin/ratings', icon: Star, label: 'Ratings Management' },
     { path: '/admin/reports', icon: AlertTriangle, label: 'User Reports' },
+    { path: '/admin/moderation', icon: FileText, label: 'Moderation Activity' },
     { path: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
   ];
 
@@ -224,6 +227,13 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex items-center gap-4">
+            <button
+              onClick={toggleTheme}
+              className="p-2 hover:bg-slate-100 rounded-xl transition-all text-slate-400 hover:text-slate-700"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {theme === 'dark' ? <Sun size={22} /> : <Moon size={22} />}
+            </button>
             <div className="relative" ref={notifRef}>
               <button
                 onClick={() => setNotifOpen(!isNotifOpen)}

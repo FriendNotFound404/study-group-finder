@@ -98,7 +98,19 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUserUpdate }) => {
             </div>
           </div>
           <div className="mt-12 space-y-1 flex-1 min-w-0">
-            <h1 className="text-3xl font-black text-white tracking-tight truncate">{user.name}</h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-3xl font-black text-white tracking-tight">{user.name}</h1>
+              {user.role === 'admin' && (
+                <span className="px-3 py-1 bg-purple-500 text-white text-xs font-black uppercase tracking-wider rounded-lg shadow-lg">
+                  Admin
+                </span>
+              )}
+              {user.role === 'moderator' && (
+                <span className="px-3 py-1 bg-blue-500 text-white text-xs font-black uppercase tracking-wider rounded-lg shadow-lg">
+                  Moderator
+                </span>
+              )}
+            </div>
             <div className="flex flex-wrap items-center gap-4 text-white font-bold text-sm">
               <div className="flex items-center gap-1.5"><MapPin size={14} className="text-white" /> {profile.location || 'Location not set'}</div>
               <div className="flex items-center gap-1.5"><Mail size={14} className="text-white" /> {user.email}</div>

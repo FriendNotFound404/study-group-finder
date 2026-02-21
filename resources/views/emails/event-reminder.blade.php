@@ -92,7 +92,7 @@
 
         <p>Don't forget to prepare for this meeting. We look forward to seeing you there!</p>
 
-        <p>Best regards,<br>StudyGroupFinder Team</p>
+        <p>Best regards,<br>StudyHub</p>
     </div>
     <div class="footer">
         <p>You received this email because you are a member of {{ $groupName }}.</p>

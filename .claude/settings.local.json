@@ -13,7 +13,17 @@
       "Bash(mysql:*)",
       "Bash(php -r:*)",
       "Bash(php -l:*)",
-      "Bash(./verify_deployment.sh:*)"
+      "Bash(./verify_deployment.sh:*)",
+      "Bash(brew services start:*)",
+      "Bash(/opt/homebrew/opt/postgresql@15/bin/createdb:*)",
+      "Bash(/opt/homebrew/opt/postgresql@15/bin/psql:*)",
+      "Bash(brew services list:*)",
+      "Bash(brew services:*)",
+      "Bash(/Library/PostgreSQL/17/bin/psql:*)",
+      "Bash(PGPASSWORD=postgres /Library/PostgreSQL/17/bin/psql:*)",
+      "Bash(PGPASSWORD=root /Library/PostgreSQL/17/bin/psql:*)",
+      "Bash(PGPASSWORD=admin /Library/PostgreSQL/17/bin/psql:*)",
+      "Bash(PGPASSWORD=hT024112001 /Library/PostgreSQL/17/bin/psql:*)"
     ]
   }
 }

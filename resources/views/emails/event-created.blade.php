@@ -55,7 +55,7 @@
 
         <p>Log in to your StudyGroupFinder account to view full event details and manage your schedule.</p>
 
-        <p>Best regards,<br>StudyGroupFinder Team</p>
+        <p>Best regards,<br>StudyHub</p>
     </div>
     <div class="footer">
         <p>You received this email because you are a member of {{ $groupName }}.</p>

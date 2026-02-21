@@ -84,6 +84,9 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notificatio
       case 'suspension_lifted': return <CheckCircle size={16} className="text-emerald-600" />;
       case 'ban_lifted': return <CheckCircle size={16} className="text-emerald-600" />;
       case 'new_group_pending': return <AlertTriangle size={16} className="text-blue-600" />;
+      case 'group_invitation': return <UserPlus size={16} className="text-blue-600" />;
+      case 'invitation_accepted': return <Check size={16} className="text-emerald-600" />;
+      case 'invitation_declined': return <X size={16} className="text-slate-500" />;
       default: return <Clock size={16} className="text-slate-400" />;
     }
   };
@@ -158,6 +161,48 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notificatio
     setShowRejectReasonModal(false);
     setRejectingNotification(null);
     setRejectionReason('');
+  };
+
+  const handleAcceptInvitation = async (e: React.MouseEvent, notification: AppNotification) => {
+    e.stopPropagation();
+    const groupId = notification.data.group_id;
+
+    if (!groupId) {
+      alert('Invalid notification data');
+      return;
+    }
+
+    setProcessing(notification.id);
+    try {
+      await apiService.acceptInvitation(groupId);
+      setProcessedNotifications(prev => ({ ...prev, [notification.id]: 'approved' }));
+      onRefresh?.();
+    } catch (err: any) {
+      alert(err.message || 'Failed to accept invitation');
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  const handleDeclineInvitation = async (e: React.MouseEvent, notification: AppNotification) => {
+    e.stopPropagation();
+    const groupId = notification.data.group_id;
+
+    if (!groupId) {
+      alert('Invalid notification data');
+      return;
+    }
+
+    setProcessing(notification.id);
+    try {
+      await apiService.declineInvitation(groupId);
+      setProcessedNotifications(prev => ({ ...prev, [notification.id]: 'rejected' }));
+      onRefresh?.();
+    } catch (err: any) {
+      alert(err.message || 'Failed to decline invitation');
+    } finally {
+      setProcessing(null);
+    }
   };
 
   return (
@@ -267,6 +312,45 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ notificatio
                           <XCircle size={10} />
                         )}
                         Reject
+                      </button>
+                    </div>
+                  )
+                )}
+
+                {n.type === 'group_invitation' && (
+                  processedNotifications[n.id] ? (
+                    <div className={`mt-2 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-center ${
+                      processedNotifications[n.id] === 'approved'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-red-100 text-red-700'
+                    }`}>
+                      {processedNotifications[n.id] === 'approved' ? 'Accepted!' : 'Declined!'}
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        onClick={(e) => handleAcceptInvitation(e, n)}
+                        disabled={processing === n.id}
+                        className="flex-1 flex items-center justify-center gap-1 text-[10px] font-black bg-emerald-500 text-white px-3 py-2 rounded-lg uppercase tracking-widest hover:bg-emerald-600 disabled:opacity-50 transition-all"
+                      >
+                        {processing === n.id ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <Check size={10} />
+                        )}
+                        Accept
+                      </button>
+                      <button
+                        onClick={(e) => handleDeclineInvitation(e, n)}
+                        disabled={processing === n.id}
+                        className="flex-1 flex items-center justify-center gap-1 text-[10px] font-black bg-red-500 text-white px-3 py-2 rounded-lg uppercase tracking-widest hover:bg-red-600 disabled:opacity-50 transition-all"
+                      >
+                        {processing === n.id ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <X size={10} />
+                        )}
+                        Decline
                       </button>
                     </div>
                   )

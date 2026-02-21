@@ -11,7 +11,7 @@ class Kernel extends ConsoleKernel
     {
         // Send event reminder emails daily at 9:00 AM
         $schedule->command('events:send-reminders')
-                 ->dailyAt('09:00')
+                 ->dailyAt('21:00')
                  ->timezone('America/New_York');
     }
 

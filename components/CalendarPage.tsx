@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Share2, Plus, Calendar as CalendarIcon, MapPin, Clock, Loader2, X, Repeat, Users, Send } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Share2, Plus, Calendar as CalendarIcon, MapPin, Clock, Loader2, X, Repeat, Users, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/apiService';
 import { StudyGroup } from '../types';
+import { containsBadWords } from '../utils/badWords';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -107,6 +108,10 @@ const CalendarPage: React.FC = () => {
 
   const handleAddEvent = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (containsBadWords(newEvent.title) || containsBadWords(newEvent.location)) {
+      alert('Your event content contains inappropriate language. Please revise and try again.');
+      return;
+    }
     try {
       await apiService.createEvent(newEvent);
       setIsModalOpen(false);
@@ -596,7 +601,7 @@ const CalendarPage: React.FC = () => {
                     disabled={sharingToGroup}
                     className="flex-1 py-3 bg-emerald-500 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-emerald-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                   >
-                    {sharingToGroup ? <Loader2 size={14} className="animate-spin" /> : <><Send size={14} /> Share</>}
+                    {sharingToGroup ? <Loader2 size={14} className="animate-spin" /> : <><Bell size={14} /> Remind</>}
                   </button>
                 )}
                 {canDeleteEvent(selectedEvent) && (

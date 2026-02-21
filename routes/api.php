@@ -43,6 +43,12 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\SuspendedUserMiddleware:
     Route::post('/groups/{groupId}/reject/{userId}', [StudyGroupController::class, 'rejectRequest']);
     Route::post('/groups/{groupId}/kick/{userId}', [StudyGroupController::class, 'kickMember']);
 
+    // Group invitations
+    Route::post('/groups/{groupId}/invite', [StudyGroupController::class, 'inviteMember']);
+    Route::post('/groups/{groupId}/invitation/accept', [StudyGroupController::class, 'acceptInvitation']);
+    Route::post('/groups/{groupId}/invitation/decline', [StudyGroupController::class, 'declineInvitation']);
+    Route::get('/groups/{groupId}/invitations', [StudyGroupController::class, 'getInvitedUsers']);
+
     // Ratings
     Route::post('/groups/{groupId}/rate', [RatingController::class, 'store']);
     Route::delete('/groups/{groupId}/rate', [RatingController::class, 'destroy']);
@@ -75,6 +81,7 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\SuspendedUserMiddleware:
     // Profile
     Route::get('/profile', [ProfileController::class, 'show']);
     Route::put('/profile', [ProfileController::class, 'update']);
+    Route::post('/profile/change-password', [ProfileController::class, 'changePassword']);
     Route::get('/profile/stats', [ProfileController::class, 'stats']);
 
     // User Profiles (view other users)
@@ -92,6 +99,7 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\SuspendedUserMiddleware:
         Route::get('/dashboard', [AdminController::class, 'dashboard']);
         Route::get('/system-overview', [AdminController::class, 'getSystemOverview']);
         Route::get('/analytics', [AdminController::class, 'getAnalytics']);
+        Route::get('/moderation-activity', [AdminController::class, 'getModerationActivity']);
 
         // User Management
         Route::get('/users', [AdminController::class, 'getUsers']);

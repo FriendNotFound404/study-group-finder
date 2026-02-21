@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2, Bell, UserX, Paperclip, File as FileIcon, LogOut, Repeat, Plus } from 'lucide-react';
+import { Send, Calendar as CalendarIcon, MessageSquare, Info, MoreHorizontal, Sparkles, Loader2, BookOpen, Mic, X, Users as UsersIcon, Clock, MapPin, Search, Archive, Unlock, Lock as LockIcon, CheckCircle2, Edit2, Trash2, Bell, UserX, Paperclip, File as FileIcon, LogOut, Repeat, Plus, UserPlus, Check, ChevronDown } from 'lucide-react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { StudyGroup, Message, User, GroupStatus, GroupMember } from '../types';
 import { geminiService } from '../services/geminiService';
@@ -9,6 +9,7 @@ import PendingRequestsModal from './PendingRequestsModal';
 import StudyPlanModal from './StudyPlanModal';
 // FIX: Import API_CONFIG from constants to resolve reference error in handleDeleteGroup
 import { API_CONFIG } from '../constants';
+import { containsBadWords } from '../utils/badWords';
 
 const GroupsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -34,11 +35,18 @@ const GroupsPage: React.FC = () => {
   const [kickingMemberId, setKickingMemberId] = useState<number | null>(null);
   const [leavingGroup, setLeavingGroup] = useState(false);
   const [showArchivedGroups, setShowArchivedGroups] = useState(false);
+  const [activeSection, setActiveSection] = useState<'created' | 'joined'>('created');
 
   const [newMeeting, setNewMeeting] = useState({ title: '', start_time: '', location: '', recurrence: 'none', recurrence_count: '' });
   const [scheduling, setScheduling] = useState(false);
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
+
+  // Invite members state
+  const [showInviteSection, setShowInviteSection] = useState(false);
+  const [inviteSearchQuery, setInviteSearchQuery] = useState('');
+  const [inviteSearchResults, setInviteSearchResults] = useState<any[]>([]);
+  const [invitingUserId, setInvitingUserId] = useState<number | null>(null);
 
   // Unread message counts per group (persisted in localStorage)
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
@@ -114,26 +122,34 @@ const GroupsPage: React.FC = () => {
     return filtered;
   }, [myGroups, searchQuery, showArchivedGroups]);
 
-  // Sort groups: unread messages first, then by most recent activity
-  const sortedFilteredGroups = useMemo(() => {
-    return [...filteredMyGroups].sort((a, b) => {
-      const aUnread = unreadCounts[a.id] || 0;
-      const bUnread = unreadCounts[b.id] || 0;
+  // Split into created vs joined, each sorted A–Z by name
+  const createdGroups = useMemo(() => {
+    return filteredMyGroups
+      .filter(g => g.creator_id === currentUser?.id)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [filteredMyGroups, currentUser]);
 
-      // Groups with unread messages always float to top
-      if (aUnread > 0 && bUnread === 0) return -1;
-      if (bUnread > 0 && aUnread === 0) return 1;
+  const joinedGroups = useMemo(() => {
+    return filteredMyGroups
+      .filter(g => g.creator_id !== currentUser?.id)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [filteredMyGroups, currentUser]);
 
-      // Then sort by most recent activity
-      const aActivity = lastActivity[a.id] || 0;
-      const bActivity = lastActivity[b.id] || 0;
-      return bActivity - aActivity; // Most recent first
-    });
-  }, [filteredMyGroups, unreadCounts, lastActivity]);
 
-  const activeGroup = myGroups.find(g => g.id === activeGroupId);
+  const createdTabBadge = useMemo(() =>
+    createdGroups.reduce((sum, g) => sum + (g.pending_requests_count || 0) + (unreadCounts[g.id] || 0), 0),
+  [createdGroups, unreadCounts]);
+
+  const joinedTabBadge = useMemo(() =>
+    joinedGroups.reduce((sum, g) => sum + (unreadCounts[g.id] || 0), 0),
+  [joinedGroups, unreadCounts]);
+
+  const activeGroup = myGroups.find(g => String(g.id) === String(activeGroupId));
   const isLeader = activeGroup?.creator_id === currentUser?.id;
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const justSwitchedGroup = useRef(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
 
@@ -163,14 +179,19 @@ const GroupsPage: React.FC = () => {
     }
   }, [searchParams]);
 
+  // When a group is opened (e.g. via Open Chat), switch to the correct tab
+  useEffect(() => {
+    if (!activeGroupId || myGroups.length === 0 || !currentUser) return;
+    const group = myGroups.find(g => String(g.id) === String(activeGroupId));
+    if (!group) return;
+    setActiveSection(group.creator_id === currentUser.id ? 'created' : 'joined');
+  }, [activeGroupId, myGroups]);
+
   const fetchMyGroups = async () => {
     try {
       const allGroups = await apiService.getGroups();
       const joined = allGroups.filter(g => g.is_member);
       setMyGroups(joined);
-      if (!activeGroupId && joined.length > 0) {
-        setActiveGroupId(joined[0].id);
-      }
     } catch (err) {
       console.error("Failed to fetch groups", err);
     } finally {
@@ -193,7 +214,7 @@ const GroupsPage: React.FC = () => {
 
   useEffect(() => {
     if (activeGroupId) {
-      const activeGroupName = myGroups.find(g => g.id === activeGroupId)?.name;
+      const activeGroupName = myGroups.find(g => String(g.id) === String(activeGroupId))?.name;
       console.log(`[Group Switch] Switching to group: ${activeGroupName} (${activeGroupId})`);
 
       const fetchMessages = async () => {
@@ -215,6 +236,8 @@ const GroupsPage: React.FC = () => {
         }
       };
       fetchMessages();
+      justSwitchedGroup.current = true;
+      setIsAtBottom(true);
       setSummary(null);
       setStudyPlan(null);
       setShowStudyPlanModal(false);
@@ -230,8 +253,23 @@ const GroupsPage: React.FC = () => {
   }, [activeGroupId]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (justSwitchedGroup.current) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'instant' });
+      justSwitchedGroup.current = false;
+    } else if (isAtBottom) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
+
+  const handleChatScroll = () => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    setIsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+  };
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   // Auto-scroll to summary when it's generated
   useEffect(() => {
@@ -245,7 +283,7 @@ const GroupsPage: React.FC = () => {
   // Poll for new messages in the active group (real-time feel)
   useEffect(() => {
     if (!activeGroupId) return;
-    const activeGroupName = myGroups.find(g => g.id === activeGroupId)?.name;
+    const activeGroupName = myGroups.find(g => String(g.id) === String(activeGroupId))?.name;
     const interval = setInterval(async () => {
       try {
         const data = await apiService.getMessages(activeGroupId);
@@ -273,7 +311,7 @@ const GroupsPage: React.FC = () => {
 
       await Promise.all(
         myGroups.map(async (group) => {
-          if (group.id === activeGroupId) {
+          if (String(group.id) === String(activeGroupId)) {
             console.log(`[Polling] Skipping active group: ${group.name} (${group.id})`);
             return;
           }
@@ -405,6 +443,10 @@ const GroupsPage: React.FC = () => {
   const handleScheduleMeeting = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeGroupId) return;
+    if (containsBadWords(newMeeting.title) || containsBadWords(newMeeting.location)) {
+      alert('Your meeting content contains inappropriate language. Please revise and try again.');
+      return;
+    }
     setScheduling(true);
     try {
       await apiService.createEvent({
@@ -538,6 +580,42 @@ const GroupsPage: React.FC = () => {
     }
   };
 
+  const handleInviteSearch = async (query: string) => {
+    setInviteSearchQuery(query);
+    if (!query.trim() || !activeGroupId) {
+      setInviteSearchResults([]);
+      return;
+    }
+
+    try {
+      const users = await apiService.searchUsers(query);
+      // Filter out users who are already members
+      const nonMembers = users.filter((user: any) =>
+        !groupMembers.some(member => member.id === user.id)
+      );
+      setInviteSearchResults(nonMembers);
+    } catch (err) {
+      console.error('Failed to search users:', err);
+    }
+  };
+
+  const handleSendInvitation = async (userId: number) => {
+    if (!activeGroupId) return;
+
+    setInvitingUserId(userId);
+    try {
+      await apiService.inviteUserToGroup(activeGroupId, userId.toString());
+      // Remove from search results or mark as invited
+      setInviteSearchResults(prev =>
+        prev.map(user => user.id === userId ? { ...user, invited: true } : user)
+      );
+    } catch (err: any) {
+      alert(err.message || 'Failed to send invitation');
+    } finally {
+      setInvitingUserId(null);
+    }
+  };
+
   const fetchGroupEvents = async (groupId: string) => {
     setLoadingEvents(true);
     try {
@@ -657,63 +735,103 @@ const GroupsPage: React.FC = () => {
             </div>
           ) : (
             <>
-              {sortedFilteredGroups.length === 0 && (
-                <div className="p-8 text-center opacity-40">
-                  {searchQuery ? (
-                    <>
-                      <Search size={24} className="mx-auto mb-2" />
-                      <p className="text-xs font-bold uppercase tracking-widest">No matching groups</p>
-                    </>
-                  ) : showArchivedGroups ? (
-                    <>
-                      <Archive size={24} className="mx-auto mb-2" />
-                      <p className="text-xs font-bold uppercase tracking-widest">No archived groups</p>
-                    </>
-                  ) : null}
-                </div>
-              )}
-              {sortedFilteredGroups.map(group => {
-                const unread = unreadCounts[group.id] || 0;
-                if (unread > 0) {
-                  console.log(`[Badge] Group "${group.name}" (${group.id}) has ${unread} unread messages. Active: ${activeGroupId === group.id}`);
-                }
-                return (
-                  <button
-                    key={group.id}
-                    onClick={() => setActiveGroupId(group.id)}
-                    className={`w-full text-left p-5 rounded-[2rem] border transition-all relative ${
-                      activeGroupId === group.id
-                        ? 'bg-orange-500 border-orange-500 text-white shadow-xl shadow-orange-100 scale-[1.02]'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    } ${group.status === GroupStatus.ARCHIVED ? 'grayscale opacity-80' : ''}`}
-                  >
-                    {unread > 0 && activeGroupId !== group.id && (
-                      <span className="absolute -top-1.5 -right-1.5 min-w-[22px] h-[22px] px-1.5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg shadow-red-200 animate-in zoom-in duration-200">
-                        {unread}
-                      </span>
+              {/* Section tabs */}
+              <div className="flex p-1 bg-slate-100 rounded-2xl mb-3">
+                <button
+                  onClick={() => { setActiveSection('created'); setActiveGroupId(null); }}
+                  className={`relative flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeSection === 'created' ? 'bg-white text-orange-500 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Created
+                  {createdGroups.length > 0 && <span className="ml-1 opacity-60">({createdGroups.length})</span>}
+                  {createdTabBadge > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center shadow">
+                      {createdTabBadge}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => { setActiveSection('joined'); setActiveGroupId(null); }}
+                  className={`relative flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeSection === 'joined' ? 'bg-white text-orange-500 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Joined
+                  {joinedGroups.length > 0 && <span className="ml-1 opacity-60">({joinedGroups.length})</span>}
+                  {joinedTabBadge > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center shadow">
+                      {joinedTabBadge}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Group list for active tab */}
+              {(() => {
+                const list = activeSection === 'created' ? createdGroups : joinedGroups;
+                if (list.length === 0) return (
+                  <div className="p-8 text-center opacity-40">
+                    {searchQuery ? (
+                      <>
+                        <Search size={24} className="mx-auto mb-2" />
+                        <p className="text-xs font-bold uppercase tracking-widest">No matching groups</p>
+                      </>
+                    ) : showArchivedGroups ? (
+                      <>
+                        <Archive size={24} className="mx-auto mb-2" />
+                        <p className="text-xs font-bold uppercase tracking-widest">No archived groups</p>
+                      </>
+                    ) : (
+                      <p className="text-xs font-bold uppercase tracking-widest">No groups here</p>
                     )}
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${activeGroupId === group.id ? 'bg-white/20' : 'bg-orange-100 text-orange-600'}`}>
-                        {group.name[0]}
-                      </div>
-                      <div className="flex-1 flex items-center justify-between">
-                        <span className={`text-[10px] font-black uppercase tracking-widest ${activeGroupId === group.id ? 'text-orange-100' : 'text-slate-400'}`}>
-                          {group.subject}
-                        </span>
-                        {group.status !== GroupStatus.OPEN && (
-                           <span className={`${activeGroupId === group.id ? 'text-white/60' : 'text-slate-300'}`}>
-                              {group.status === GroupStatus.ARCHIVED ? <Archive size={10} /> : <LockIcon size={10} />}
-                           </span>
-                        )}
-                      </div>
-                    </div>
-                    <h3 className="font-bold truncate">{group.name}</h3>
-                    <p className={`text-[10px] font-bold mt-1 ${activeGroupId === group.id ? 'text-orange-50' : 'text-slate-400'}`}>
-                      {group.members_count} Members • {group.status}
-                    </p>
-                  </button>
+                  </div>
                 );
-              })}
+                return (
+                  <div className="space-y-3">
+                    {list.map(group => {
+                      const unread = unreadCounts[group.id] || 0;
+                      return (
+                        <button
+                          key={group.id}
+                          onClick={() => setActiveGroupId(String(group.id))}
+                          className={`w-full text-left p-5 rounded-[2rem] border transition-all relative ${
+                            String(activeGroupId) === String(group.id)
+                              ? 'bg-orange-500 border-orange-500 text-white shadow-xl shadow-orange-100 scale-[1.02]'
+                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          } ${group.status === GroupStatus.ARCHIVED ? 'grayscale opacity-80' : ''}`}
+                        >
+                          {unread > 0 && String(activeGroupId) !== String(group.id) && (
+                            <span className="absolute -top-1.5 -right-1.5 min-w-[22px] h-[22px] px-1.5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg shadow-red-200 animate-in zoom-in duration-200">
+                              {unread}
+                            </span>
+                          )}
+                          {(group.pending_requests_count || 0) > 0 && group.creator_id === currentUser?.id && String(activeGroupId) !== String(group.id) && (
+                            <span className="absolute -top-1.5 -left-1.5 min-w-[22px] h-[22px] px-1.5 bg-amber-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg shadow-amber-200 animate-in zoom-in duration-200">
+                              {group.pending_requests_count}
+                            </span>
+                          )}
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${String(activeGroupId) === String(group.id) ? 'bg-white/20' : 'bg-orange-100 text-orange-600'}`}>
+                              {group.name[0]}
+                            </div>
+                            <div className="flex-1 flex items-center justify-between">
+                              <span className={`text-[10px] font-black uppercase tracking-widest ${String(activeGroupId) === String(group.id) ? 'text-orange-100' : 'text-slate-400'}`}>
+                                {group.subject}
+                              </span>
+                              {group.status !== GroupStatus.OPEN && (
+                                <span className={`${String(activeGroupId) === String(group.id) ? 'text-white/60' : 'text-slate-300'}`}>
+                                  {group.status === GroupStatus.ARCHIVED ? <Archive size={10} /> : <LockIcon size={10} />}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <h3 className="font-bold truncate">{group.name}</h3>
+                          <p className={`text-[10px] font-bold mt-1 ${String(activeGroupId) === String(group.id) ? 'text-orange-50' : 'text-slate-400'}`}>
+                            {group.members_count} Members • {group.status}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </>
           )}
         </div>
@@ -856,7 +974,7 @@ const GroupsPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/30">
+            <div ref={chatContainerRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/30 relative">
               {activeGroup.status === GroupStatus.ARCHIVED && (
                  <div className="bg-slate-100 border border-slate-200 p-6 rounded-[2rem] text-center space-y-2 mb-4 animate-in slide-in-from-top-2">
                     <Archive size={32} className="mx-auto text-slate-400" />
@@ -954,6 +1072,15 @@ const GroupsPage: React.FC = () => {
                     );
                   })}
                 </>
+              )}
+              {!isAtBottom && (
+                <button
+                  onClick={scrollToBottom}
+                  className="sticky bottom-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-9 h-9 bg-orange-500 hover:bg-orange-600 text-white rounded-full shadow-lg transition-all z-10"
+                  aria-label="Scroll to bottom"
+                >
+                  <ChevronDown size={18} />
+                </button>
               )}
               <div ref={chatEndRef} />
             </div>
@@ -1282,6 +1409,86 @@ const GroupsPage: React.FC = () => {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Invite Members Section (Leader Only) */}
+                {isLeader && (
+                  <div className="mt-6 border-t border-slate-200 pt-6">
+                    <button
+                      onClick={() => setShowInviteSection(!showInviteSection)}
+                      className="flex items-center gap-2 text-sm font-bold text-purple-600 hover:text-purple-700 transition-colors mb-4"
+                    >
+                      <UserPlus size={16} />
+                      {showInviteSection ? 'Hide' : 'Invite Members'}
+                    </button>
+
+                    {showInviteSection && (
+                      <div className="space-y-4">
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={inviteSearchQuery}
+                            onChange={(e) => handleInviteSearch(e.target.value)}
+                            placeholder="Search users by name or major..."
+                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all outline-none"
+                          />
+                        </div>
+
+                        {inviteSearchResults.length > 0 && (
+                          <div className="max-h-60 overflow-y-auto space-y-2 bg-slate-50 rounded-xl p-3">
+                            {inviteSearchResults.map((user: any) => (
+                              <div
+                                key={user.id}
+                                className="flex items-center justify-between bg-white p-3 rounded-lg border border-slate-200"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-blue-400 flex items-center justify-center text-white font-bold">
+                                    {user.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-slate-900 text-sm">{user.name}</div>
+                                    <div className="text-xs text-slate-500">{user.email}</div>
+                                    {user.major && (
+                                      <div className="text-xs text-slate-400">{user.major}</div>
+                                    )}
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => handleSendInvitation(user.id)}
+                                  disabled={invitingUserId === user.id || user.invited}
+                                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                                    user.invited
+                                      ? 'bg-emerald-100 text-emerald-700'
+                                      : 'bg-purple-500 text-white hover:bg-purple-600'
+                                  }`}
+                                >
+                                  {invitingUserId === user.id ? (
+                                    <Loader2 size={14} className="animate-spin" />
+                                  ) : user.invited ? (
+                                    <>
+                                      <Check size={14} />
+                                      Invited
+                                    </>
+                                  ) : (
+                                    <>
+                                      <UserPlus size={14} />
+                                      Invite
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {inviteSearchQuery && inviteSearchResults.length === 0 && (
+                          <div className="text-center text-slate-400 text-sm py-4">
+                            No users found
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

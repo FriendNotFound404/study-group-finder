@@ -31,7 +31,7 @@ class EmailVerificationMail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Verify Your Email - StudyGroupFinder',
+            subject: 'Verify Your Email - StudyHub',
         );
     }
 

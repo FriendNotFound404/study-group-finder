@@ -26,7 +26,7 @@ class StudyGroup extends Model
     public function members() {
         // Only approved members
         return $this->belongsToMany(User::class, 'group_user', 'group_id', 'user_id')
-            ->withPivot('status', 'approved_at', 'rejected_at')
+            ->withPivot('status', 'approved_at', 'rejected_at', 'invited_by')
             ->wherePivot('status', 'approved')
             ->withTimestamps();
     }
@@ -34,15 +34,24 @@ class StudyGroup extends Model
     public function pendingRequests() {
         // Users with pending join requests
         return $this->belongsToMany(User::class, 'group_user', 'group_id', 'user_id')
-            ->withPivot('status', 'approved_at', 'rejected_at')
+            ->withPivot('status', 'approved_at', 'rejected_at', 'invited_by')
             ->wherePivot('status', 'pending')
+            ->withTimestamps();
+    }
+
+    public function invitedUsers() {
+        // Users who have been invited by the leader (pending invitations)
+        return $this->belongsToMany(User::class, 'group_user', 'group_id', 'user_id')
+            ->withPivot('status', 'invited_by', 'created_at')
+            ->wherePivot('status', 'pending')
+            ->whereNotNull('invited_by')
             ->withTimestamps();
     }
 
     public function allMemberRelations() {
         // All relations regardless of status (for internal use)
         return $this->belongsToMany(User::class, 'group_user', 'group_id', 'user_id')
-            ->withPivot('status', 'approved_at', 'rejected_at')
+            ->withPivot('status', 'approved_at', 'rejected_at', 'invited_by')
             ->withTimestamps();
     }
 

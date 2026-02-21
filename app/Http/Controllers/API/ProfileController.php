@@ -5,6 +5,8 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 
 class ProfileController extends Controller {
     public function show() {
@@ -38,6 +40,7 @@ class ProfileController extends Controller {
             'major' => $user->major,
             'bio' => $user->bio,
             'location' => $user->location,
+            'role' => $user->role,
             'warnings' => $user->warnings ?? 0,
             'banned' => $user->banned ?? false,
             'created_at' => $user->created_at,
@@ -52,5 +55,29 @@ class ProfileController extends Controller {
             'karma' => $user->karma_points,
             'activity' => [4, 7, 3, 5, 2, 8, 6] // Mock activity data
         ];
+    }
+
+    public function changePassword(Request $request) {
+        $request->validate([
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|min:8|confirmed',
+        ]);
+
+        $user = Auth::user();
+
+        // Verify current password
+        if (!Hash::check($request->current_password, $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['The current password is incorrect.'],
+            ]);
+        }
+
+        // Update password
+        $user->password = Hash::make($request->new_password);
+        $user->save();
+
+        return response()->json([
+            'message' => 'Password changed successfully.'
+        ]);
     }
 }

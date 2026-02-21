@@ -12,6 +12,7 @@ use App\Models\Event;
 use App\Models\Rating;
 use App\Models\Report;
 use App\Models\UserWarning;
+use App\Models\ModerationLog;
 use App\Services\KarmaService;
 use App\Mail\UserWarnedMail;
 use App\Mail\UserBannedMail;
@@ -168,10 +169,12 @@ class AdminController extends Controller
                     ->take(5)
                     ->get()
                     ->map(function ($rating) {
+                        $avgRating = ($rating->group_rating + $rating->leader_rating) / 2;
                         return [
                             'id' => $rating->id,
                             'group_rating' => $rating->group_rating,
                             'leader_rating' => $rating->leader_rating,
+                            'average_rating' => round($avgRating, 1),
                             'user_name' => $rating->user->name,
                             'group_name' => $rating->group->name,
                             'created_at' => $rating->created_at,
@@ -208,6 +211,7 @@ class AdminController extends Controller
         $perPage = $request->get('per_page', 20);
         $search = $request->get('search', '');
         $role = $request->get('role', '');
+        $status = $request->get('status', '');
 
         $users = User::when($search, function ($query, $search) {
             return $query->where('name', 'like', "%{$search}%")
@@ -216,6 +220,17 @@ class AdminController extends Controller
         })
         ->when($role, function ($query, $role) {
             return $query->where('role', $role);
+        })
+        ->when($status, function ($query, $status) {
+            if ($status === 'warned') {
+                return $query->where('warnings', '>', 0);
+            } elseif ($status === 'suspended') {
+                return $query->whereNotNull('suspended_until')
+                    ->where('suspended_until', '>', now());
+            } elseif ($status === 'banned') {
+                return $query->where('banned', true);
+            }
+            return $query;
         })
         ->withCount(['createdGroups', 'joinedGroups'])
         ->orderBy('created_at', 'desc')
@@ -382,6 +397,18 @@ class AdminController extends Controller
             'approved_at' => now()
         ]);
 
+        // Log moderation action
+        ModerationLog::create([
+            'moderator_id' => Auth::id(),
+            'target_user_id' => $group->creator_id,
+            'action_type' => 'group_approved',
+            'reason' => "Approved group '{$group->name}'",
+            'metadata' => [
+                'group_id' => $group->id,
+                'group_name' => $group->name
+            ]
+        ]);
+
         // Notify the group creator
         Notification::create([
             'user_id' => $group->creator_id,
@@ -428,6 +455,18 @@ class AdminController extends Controller
             'approval_status' => 'rejected',
             'rejected_reason' => $validated['reason'],
             'approved_by' => Auth::id()
+        ]);
+
+        // Log moderation action
+        ModerationLog::create([
+            'moderator_id' => Auth::id(),
+            'target_user_id' => $group->creator_id,
+            'action_type' => 'group_rejected',
+            'reason' => $validated['reason'],
+            'metadata' => [
+                'group_id' => $group->id,
+                'group_name' => $group->name
+            ]
         ]);
 
         // Notify the group creator
@@ -503,8 +542,8 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', $startDate)
-            ->groupBy('date')
-            ->orderBy('date')
+            ->groupBy(DB::raw('DATE(created_at)'))
+            ->orderBy(DB::raw('DATE(created_at)'))
             ->get();
 
             // Group creation
@@ -513,8 +552,8 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', $startDate)
-            ->groupBy('date')
-            ->orderBy('date')
+            ->groupBy(DB::raw('DATE(created_at)'))
+            ->orderBy(DB::raw('DATE(created_at)'))
             ->get();
 
             // Message activity
@@ -523,8 +562,8 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', $startDate)
-            ->groupBy('date')
-            ->orderBy('date')
+            ->groupBy(DB::raw('DATE(created_at)'))
+            ->orderBy(DB::raw('DATE(created_at)'))
             ->get();
 
             // Rating activity
@@ -533,8 +572,8 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', $startDate)
-            ->groupBy('date')
-            ->orderBy('date')
+            ->groupBy(DB::raw('DATE(created_at)'))
+            ->orderBy(DB::raw('DATE(created_at)'))
             ->get();
 
             // Event activity
@@ -543,8 +582,8 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', $startDate)
-            ->groupBy('date')
-            ->orderBy('date')
+            ->groupBy(DB::raw('DATE(created_at)'))
+            ->orderBy(DB::raw('DATE(created_at)'))
             ->get();
 
             // Top groups by members
@@ -580,7 +619,6 @@ class AdminController extends Controller
                 ->orWhereHas('joinedGroups', function($q) {
                     $q->where('group_user.created_at', '>=', now()->subDays(30));
                 })
-                ->orWhere('last_login_at', '>=', now()->subDays(30))
                 ->orWhere('created_at', '>=', now()->subDays(30));
             })
             ->count();
@@ -591,18 +629,23 @@ class AdminController extends Controller
 
             // Database-agnostic SQL for extracting hour and day
             $driver = DB::connection()->getDriverName();
-            $hourSql = $driver === 'sqlite'
-                ? "CAST(strftime('%H', created_at) AS INTEGER)"
-                : "HOUR(created_at)";
-            $daySql = $driver === 'sqlite'
-                ? "CAST(strftime('%w', created_at) AS INTEGER)"
-                : "DAYOFWEEK(created_at)";
-            $eventHourSql = $driver === 'sqlite'
-                ? "CAST(strftime('%H', start_time) AS INTEGER)"
-                : "HOUR(start_time)";
-            $eventDaySql = $driver === 'sqlite'
-                ? "CAST(strftime('%w', start_time) AS INTEGER)"
-                : "DAYOFWEEK(start_time)";
+            if ($driver === 'sqlite') {
+                $hourSql = "CAST(strftime('%H', created_at) AS INTEGER)";
+                $daySql = "CAST(strftime('%w', created_at) AS INTEGER)";
+                $eventHourSql = "CAST(strftime('%H', start_time) AS INTEGER)";
+                $eventDaySql = "CAST(strftime('%w', start_time) AS INTEGER)";
+            } elseif ($driver === 'pgsql') {
+                $hourSql = "EXTRACT(HOUR FROM created_at)::int";
+                $daySql = "EXTRACT(DOW FROM created_at)::int";
+                $eventHourSql = "EXTRACT(HOUR FROM start_time)::int";
+                $eventDaySql = "EXTRACT(DOW FROM start_time)::int";
+            } else {
+                // MySQL / MariaDB
+                $hourSql = "HOUR(created_at)";
+                $daySql = "DAYOFWEEK(created_at)";
+                $eventHourSql = "HOUR(start_time)";
+                $eventDaySql = "DAYOFWEEK(start_time)";
+            }
 
             // Peak activity hours (from messages)
             $peakActivityHours = Message::select(
@@ -610,7 +653,7 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', now()->subDays(30))
-            ->groupBy('hour')
+            ->groupBy(DB::raw($hourSql))
             ->orderBy('count', 'desc')
             ->get();
 
@@ -620,13 +663,13 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', now()->subDays(30))
-            ->groupBy('day')
+            ->groupBy(DB::raw($daySql))
             ->orderBy('count', 'desc')
             ->get()
             ->map(function($item) use ($driver) {
                 $days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                // SQLite returns 0-6 (0=Sunday), MySQL returns 1-7 (1=Sunday)
-                $dayIndex = $driver === 'sqlite' ? $item->day : $item->day - 1;
+                // MySQL DAYOFWEEK returns 1-7 (1=Sunday); SQLite and PostgreSQL return 0-6 (0=Sunday)
+                $dayIndex = $driver === 'mysql' ? $item->day - 1 : $item->day;
                 $item->day_name = $days[$dayIndex] ?? 'Unknown';
                 return $item;
             });
@@ -637,13 +680,13 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('start_time', '>=', now()->subDays(30))
-            ->groupBy('day')
+            ->groupBy(DB::raw($eventDaySql))
             ->orderBy('count', 'desc')
             ->get()
             ->map(function($item) use ($driver) {
                 $days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                // SQLite returns 0-6 (0=Sunday), MySQL returns 1-7 (1=Sunday)
-                $dayIndex = $driver === 'sqlite' ? $item->day : $item->day - 1;
+                // MySQL DAYOFWEEK returns 1-7 (1=Sunday); SQLite and PostgreSQL return 0-6 (0=Sunday)
+                $dayIndex = $driver === 'mysql' ? $item->day - 1 : $item->day;
                 $item->day_name = $days[$dayIndex] ?? 'Unknown';
                 return $item;
             });
@@ -654,8 +697,8 @@ class AdminController extends Controller
                 DB::raw('count(*) as count')
             )
             ->where('start_time', '>=', now()->subDays(30))
-            ->groupBy('hour')
-            ->orderBy('hour')
+            ->groupBy(DB::raw($eventHourSql))
+            ->orderBy(DB::raw($eventHourSql))
             ->get();
 
             // Average group size
@@ -806,6 +849,18 @@ class AdminController extends Controller
 
             $user->save();
 
+            // Log moderation action
+            ModerationLog::create([
+                'moderator_id' => Auth::id(),
+                'target_user_id' => $user->id,
+                'action_type' => $autoBanned ? 'ban' : 'warn',
+                'reason' => $autoBanned ? 'Automatic ban after 3 warnings' : ($validated['reason'] ?? 'General warning'),
+                'metadata' => [
+                    'warnings_count' => $activeWarningsCount,
+                    'auto_banned' => $autoBanned
+                ]
+            ]);
+
         // Send notification to warned user
         if ($autoBanned) {
             $banReason = 'Automatic ban after receiving 3 warnings';
@@ -921,6 +976,14 @@ class AdminController extends Controller
             // Deduct karma for being banned
             KarmaService::penalizeBan($user);
 
+            // Log moderation action
+            ModerationLog::create([
+                'moderator_id' => Auth::id(),
+                'target_user_id' => $user->id,
+                'action_type' => 'ban',
+                'reason' => $validated['reason'] ?? 'User banned by administrator',
+            ]);
+
             // Prepare notification data
             $notificationData = [
                 'message' => 'Your account has been banned by an administrator'
@@ -982,6 +1045,14 @@ class AdminController extends Controller
         $user->warnings = 0; // Reset warnings when unbanning
         $user->save();
 
+        // Log moderation action
+        ModerationLog::create([
+            'moderator_id' => Auth::id(),
+            'target_user_id' => $user->id,
+            'action_type' => 'unban',
+            'reason' => 'User unbanned by administrator',
+        ]);
+
         // Create notification
         Notification::create([
             'user_id' => $user->id,
@@ -1024,6 +1095,14 @@ class AdminController extends Controller
         $user->suspended_until = null;
         $user->suspension_reason = null;
         $user->save();
+
+        // Log moderation action
+        ModerationLog::create([
+            'moderator_id' => Auth::id(),
+            'target_user_id' => $user->id,
+            'action_type' => 'unsuspend',
+            'reason' => 'Suspension lifted by administrator',
+        ]);
 
         // Create notification
         Notification::create([
@@ -1126,6 +1205,7 @@ class AdminController extends Controller
         $perPage = $request->get('per_page', 20);
         $search = $request->get('search', '');
         $type = $request->get('type', '');
+        $status = $request->get('status', ''); // 'upcoming' | 'past' | ''
 
         $events = Event::with(['user', 'group'])
             ->when($search, function ($query, $search) {
@@ -1141,7 +1221,13 @@ class AdminController extends Controller
             ->when($type, function ($query, $type) {
                 return $query->where('type', $type);
             })
-            ->orderBy('start_time', 'desc')
+            ->when($status === 'upcoming', function ($query) {
+                return $query->where('start_time', '>=', now());
+            })
+            ->when($status === 'past', function ($query) {
+                return $query->where('start_time', '<', now());
+            })
+            ->orderBy('start_time', 'asc')
             ->paginate($perPage);
 
         return response()->json($events);
@@ -1297,6 +1383,18 @@ class AdminController extends Controller
         $user->role = $validated['role'];
         $user->save();
 
+        // Log moderation action
+        ModerationLog::create([
+            'moderator_id' => Auth::id(),
+            'target_user_id' => $user->id,
+            'action_type' => 'role_change',
+            'reason' => "Role changed from {$oldRole} to {$validated['role']}",
+            'metadata' => [
+                'old_role' => $oldRole,
+                'new_role' => $validated['role']
+            ]
+        ]);
+
         // Send notification
         Notification::create([
             'user_id' => $user->id,
@@ -1363,6 +1461,18 @@ class AdminController extends Controller
 
             // Revoke all tokens to immediately log out the user
             $user->tokens()->delete();
+
+            // Log moderation action
+            ModerationLog::create([
+                'moderator_id' => Auth::id(),
+                'target_user_id' => $user->id,
+                'action_type' => 'suspend',
+                'duration_days' => $validated['duration_days'],
+                'reason' => $validated['reason'] ?? "Suspended for {$validated['duration_days']} days",
+                'metadata' => [
+                    'suspended_until' => $user->suspended_until->toDateTimeString()
+                ]
+            ]);
 
             // Prepare notification data
             $notificationData = [
@@ -1435,6 +1545,14 @@ class AdminController extends Controller
         $user->password = Hash::make($tempPassword);
         $user->save();
 
+        // Log moderation action
+        ModerationLog::create([
+            'moderator_id' => Auth::id(),
+            'target_user_id' => $user->id,
+            'action_type' => 'password_reset',
+            'reason' => 'Password reset by administrator',
+        ]);
+
         // Send notification
         Notification::create([
             'user_id' => $user->id,
@@ -1464,5 +1582,19 @@ class AdminController extends Controller
             'temp_password' => $tempPassword,
             'note' => 'Temporary password has been sent to user via notification'
         ]);
+    }
+
+    /**
+     * Get recent moderation activity
+     */
+    public function getModerationActivity(Request $request)
+    {
+        $perPage = $request->get('per_page', 50);
+
+        $logs = ModerationLog::with(['moderator:id,name,email,role', 'targetUser:id,name,email'])
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
+
+        return response()->json($logs);
     }
 }

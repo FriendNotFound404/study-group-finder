@@ -54,7 +54,7 @@
 
         <p>Log in to StudyGroupFinder to view the full message and reply.</p>
 
-        <p>Best regards,<br>StudyGroupFinder Team</p>
+        <p>Best regards,<br>StudyHub</p>
     </div>
     <div class="footer">
         <p>You received this email because you are a member of {{ $groupName }}.</p>

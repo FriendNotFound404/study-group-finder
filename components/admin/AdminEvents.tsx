@@ -39,6 +39,7 @@ const AdminEvents: React.FC = () => {
   const [totalEvents, setTotalEvents] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('upcoming');
   const [deleting, setDeleting] = useState<string | null>(null);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [saving, setSaving] = useState(false);
@@ -52,7 +53,7 @@ const AdminEvents: React.FC = () => {
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [currentPage, searchTerm, typeFilter]);
+  }, [currentPage, searchTerm, typeFilter, statusFilter]);
 
   const fetchEvents = async (silent = false) => {
     try {
@@ -71,6 +72,7 @@ const AdminEvents: React.FC = () => {
         per_page: '20',
         ...(searchTerm && { search: searchTerm }),
         ...(typeFilter && { type: typeFilter }),
+        ...(statusFilter && { status: statusFilter }),
       });
 
       const response = await fetch(`http://localhost:8000/api/admin/events?${params}`, {
@@ -111,7 +113,7 @@ const AdminEvents: React.FC = () => {
   };
 
   const handleDelete = async (eventId: string) => {
-    if (!confirm('Are you sure you want to delete this event? This action cannot be undone.')) {
+    if (!confirm('Are you sure you want to delete this meeting? This action cannot be undone.')) {
       return;
     }
 
@@ -131,13 +133,13 @@ const AdminEvents: React.FC = () => {
         },
       });
 
-      if (!response.ok) throw new Error('Failed to delete event');
+      if (!response.ok) throw new Error('Failed to delete meeting');
 
-      alert('Event deleted successfully');
+      alert('Meeting deleted successfully');
       fetchEvents();
     } catch (err) {
-      console.error('Failed to delete event:', err);
-      alert('Failed to delete event');
+      console.error('Failed to delete meeting:', err);
+      alert('Failed to delete meeting');
     } finally {
       setDeleting(null);
     }
@@ -171,14 +173,14 @@ const AdminEvents: React.FC = () => {
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to update event');
+      if (!response.ok) throw new Error('Failed to update meeting');
 
-      alert('Event updated successfully');
+      alert('Meeting updated successfully');
       setEditingEvent(null);
       fetchEvents();
     } catch (err) {
-      console.error('Failed to update event:', err);
-      alert('Failed to update event');
+      console.error('Failed to update meeting:', err);
+      alert('Failed to update meeting');
     } finally {
       setSaving(false);
     }
@@ -213,7 +215,7 @@ const AdminEvents: React.FC = () => {
         <div className="flex items-center justify-center h-full">
           <div className="text-center">
             <Loader2 className="w-16 h-16 text-purple-600 animate-spin mx-auto mb-4" />
-            <p className="text-slate-600 font-bold">Loading events...</p>
+            <p className="text-slate-600 font-bold">Loading meetings...</p>
           </div>
         </div>
       </AdminLayout>
@@ -227,9 +229,9 @@ const AdminEvents: React.FC = () => {
         <div className="bg-white rounded-2xl border-2 border-slate-200 p-6 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h2 className="text-2xl font-black text-slate-900">Events Management</h2>
+              <h2 className="text-2xl font-black text-slate-900">Meetings Management</h2>
               <p className="text-sm text-slate-500 font-medium mt-1">
-                Manage all calendar events and meetings ({totalEvents} total)
+                Manage all calendar meetings ({totalEvents} total)
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -249,7 +251,7 @@ const AdminEvents: React.FC = () => {
           </div>
 
           {/* Search and Filters */}
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
               <input
@@ -273,7 +275,7 @@ const AdminEvents: React.FC = () => {
                 }}
                 className="w-full pl-10 pr-4 py-2.5 border-2 border-slate-200 rounded-xl focus:border-purple-400 focus:outline-none font-medium text-sm appearance-none bg-white"
               >
-                <option value="">All Event Types</option>
+                <option value="">All Meeting Types</option>
                 <option value="General">General</option>
                 <option value="Project">Project</option>
                 <option value="Group Meeting">Group Meeting</option>
@@ -281,17 +283,32 @@ const AdminEvents: React.FC = () => {
                 <option value="Assignment">Assignment</option>
               </select>
             </div>
+            <div className="relative">
+              <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full pl-10 pr-4 py-2.5 border-2 border-slate-200 rounded-xl focus:border-purple-400 focus:outline-none font-medium text-sm appearance-none bg-white"
+              >
+                <option value="">All Meetings</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="past">Past (Done)</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        {/* Events List */}
+        {/* Meetings List */}
         <div className="bg-white rounded-2xl border-2 border-slate-200 shadow-sm overflow-hidden">
           {events.length === 0 ? (
             <div className="p-12 text-center">
               <Calendar className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-              <p className="text-slate-600 font-bold">No events found</p>
+              <p className="text-slate-600 font-bold">No meetings found</p>
               <p className="text-sm text-slate-400 mt-1">
-                {searchTerm || typeFilter ? 'Try adjusting your filters' : 'Events will appear here'}
+                {searchTerm || typeFilter ? 'Try adjusting your filters' : 'Meetings will appear here'}
               </p>
             </div>
           ) : (
@@ -300,7 +317,7 @@ const AdminEvents: React.FC = () => {
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-black text-slate-600 uppercase tracking-wider">
-                      Event Details
+                      Meeting Details
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-black text-slate-600 uppercase tracking-wider">
                       Date & Time
@@ -320,13 +337,18 @@ const AdminEvents: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {events.map((event) => (
-                    <tr key={event.id} className="hover:bg-slate-50 transition-colors">
+                  {events.map((event) => {
+                    const isPast = new Date(event.start_time) < new Date();
+                    return (
+                    <tr key={event.id} className={`hover:bg-slate-50 transition-colors ${isPast ? 'opacity-60' : ''}`}>
                       <td className="px-6 py-4">
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
-                            <Calendar size={16} className="text-purple-500" />
+                            <Calendar size={16} className={isPast ? 'text-slate-400' : 'text-purple-500'} />
                             <span className="font-bold text-slate-900">{event.title}</span>
+                            {isPast && (
+                              <span className="px-1.5 py-0.5 bg-slate-200 text-slate-500 rounded text-[10px] font-black uppercase tracking-wider">Done</span>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             <span className={`px-2 py-1 rounded-full text-xs font-bold ${getEventTypeColor(event.type)}`}>
@@ -397,7 +419,7 @@ const AdminEvents: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>

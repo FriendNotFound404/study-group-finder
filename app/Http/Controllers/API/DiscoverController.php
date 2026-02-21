@@ -77,8 +77,10 @@ class DiscoverController extends Controller {
             return $this->leaders();
         }
 
-        return User::where('name', 'like', "%{$query}%")
-            ->orWhere('major', 'like', "%{$query}%")
+        $lower = strtolower($query);
+
+        return User::whereRaw('LOWER(name) LIKE ?', ["%{$lower}%"])
+            ->orWhereRaw('LOWER(major) LIKE ?', ["%{$lower}%"])
             ->orderBy('karma_points', 'desc')
             ->select('id', 'name', 'email', 'major', 'karma_points', 'role')
             ->take(20)

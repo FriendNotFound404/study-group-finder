@@ -69,7 +69,7 @@ return new class extends Migration
         Schema::table('group_user', function (Blueprint $table) {
             $table->index('user_id', 'idx_group_user_user_id');
             $table->index('group_id', 'idx_group_user_group_id');
-            $table->index('is_leader', 'idx_group_user_is_leader');
+            // is_leader column doesn't exist in group_user table
             $table->index('created_at', 'idx_group_user_created_at');
         });
 
@@ -163,7 +163,7 @@ return new class extends Migration
         Schema::table('group_user', function (Blueprint $table) {
             $table->dropIndex('idx_group_user_user_id');
             $table->dropIndex('idx_group_user_group_id');
-            $table->dropIndex('idx_group_user_is_leader');
+            // is_leader column doesn't exist in group_user table
             $table->dropIndex('idx_group_user_created_at');
         });
 

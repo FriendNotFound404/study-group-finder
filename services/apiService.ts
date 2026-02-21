@@ -154,6 +154,39 @@ export const apiService = {
     await handleResponse(res);
   },
 
+  // Group invitations
+  async inviteUserToGroup(groupId: string, userId: string): Promise<{message: string; invited_user: any; auto_approved?: boolean}> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/invite`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ user_id: userId })
+    });
+    return handleResponse(res);
+  },
+
+  async acceptInvitation(groupId: string): Promise<{message: string; group: any}> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/invitation/accept`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    return handleResponse(res);
+  },
+
+  async declineInvitation(groupId: string): Promise<{message: string}> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/invitation/decline`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    return handleResponse(res);
+  },
+
+  async getPendingInvitations(groupId: string): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/groups/${groupId}/invitations`, {
+      headers: getHeaders()
+    });
+    return handleResponse(res);
+  },
+
   // Ratings
   async submitRating(groupId: string, data: { group_rating: number; leader_rating: number }): Promise<{success: boolean; rating: Rating; edits_remaining: number; message: string}> {
     const res = await fetch(`${BASE_URL}/groups/${groupId}/rate`, {
@@ -322,6 +355,15 @@ export const apiService = {
   async updateProfile(data: any): Promise<User> {
     const res = await fetch(`${BASE_URL}/profile`, {
       method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(data)
+    });
+    return handleResponse(res);
+  },
+
+  async changePassword(data: { current_password: string; new_password: string; new_password_confirmation: string }): Promise<{ message: string }> {
+    const res = await fetch(`${BASE_URL}/profile/change-password`, {
+      method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(data)
     });

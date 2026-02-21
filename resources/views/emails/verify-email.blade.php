@@ -3,7 +3,7 @@
 
 Hello {{ $userName }}!
 
-Thank you for registering with StudyGroupFinder. To complete your registration and access all features, please verify your email address by clicking the button below.
+Thank you for registering with StudyHub. To complete your registration and access all features, please verify your email address by clicking the button below.
 
 <x-mail::button :url="$verificationUrl">
 Verify Email Address

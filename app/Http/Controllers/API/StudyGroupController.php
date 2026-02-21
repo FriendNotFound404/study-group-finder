@@ -19,6 +19,9 @@ use App\Mail\JoinRejectedMail;
 use App\Mail\RemovedFromGroupMail;
 use App\Mail\GroupApprovedMail;
 use App\Mail\OwnershipTransferredMail;
+use App\Mail\GroupInvitationMail;
+use App\Mail\InvitationAcceptedMail;
+use App\Mail\InvitationDeclinedMail;
 
 class StudyGroupController extends Controller
 {
@@ -59,13 +62,8 @@ class StudyGroupController extends Controller
             'location' => 'required|string',
         ]);
 
-        // Check if this is the user's first group creation
-        $hasApprovedGroups = StudyGroup::where('creator_id', $user->id)
-            ->where('approval_status', 'approved')
-            ->exists();
-
-        // First-time creators need approval, subsequent groups are auto-approved
-        $approvalStatus = $hasApprovedGroups ? 'approved' : 'pending';
+        // Auto-approve all groups (approval system disabled)
+        $approvalStatus = 'approved';
 
         $group = StudyGroup::create(array_merge($validated, [
             'creator_id' => $user->id,
@@ -73,8 +71,8 @@ class StudyGroupController extends Controller
             'approval_status' => $approvalStatus
         ]));
 
-        // Upgrade user to leader role if they aren't already
-        if ($user->role !== User::ROLE_LEADER) {
+        // Upgrade member to leader role, but preserve admin and moderator roles
+        if ($user->role === 'member') {
             $user->role = User::ROLE_LEADER;
             $user->save();
         }
@@ -280,6 +278,12 @@ class StudyGroupController extends Controller
         // Deduct karma for leaving a group
         KarmaService::penalizeLeave($user);
 
+        // Deduct karma from the group leader for losing a member
+        $groupLeader = User::find($group->creator_id);
+        if ($groupLeader && $groupLeader->id !== $user->id) {
+            KarmaService::penalizeLeaderForMemberLeave($groupLeader);
+        }
+
         return response()->json(['message' => 'Left successfully']);
     }
 
@@ -290,14 +294,6 @@ class StudyGroupController extends Controller
     public function getMembers($id) {
         $group = StudyGroup::findOrFail($id);
         $userId = Auth::id();
-
-        // Check if user is a member of this group
-        $isMember = $group->members()->where('users.id', $userId)->exists();
-        $isCreator = $group->creator_id === $userId;
-
-        if (!$isMember && !$isCreator) {
-            return response()->json(['message' => 'Unauthorized. Only group members can view the member list.'], 403);
-        }
 
         // Get all approved members with their details
         $members = $group->members()
@@ -415,6 +411,12 @@ class StudyGroupController extends Controller
 
             // Award karma for successful join approval
             KarmaService::awardJoinApproval($requestingUser);
+
+            // Award karma to the group leader for gaining a member
+            $groupLeader = User::find($group->creator_id);
+            if ($groupLeader) {
+                KarmaService::awardLeaderForMemberJoin($groupLeader);
+            }
         }
 
         return response()->json(['message' => 'Join request approved successfully.']);
@@ -544,6 +546,290 @@ class StudyGroupController extends Controller
         }
 
         return response()->json(['message' => 'Member removed successfully.']);
+    }
+
+    /**
+     * Invite a user to join the group (Leader only)
+     */
+    public function inviteMember(Request $request, $groupId)
+    {
+        $validated = $request->validate([
+            'user_id' => 'required|exists:users,id'
+        ]);
+
+        $group = StudyGroup::findOrFail($groupId);
+        $currentUser = Auth::user();
+        $targetUserId = $validated['user_id'];
+
+        // Only leader can invite members
+        if ($group->creator_id !== $currentUser->id) {
+            return response()->json(['message' => 'Only the group leader can invite members.'], 403);
+        }
+
+        // Check if group is archived
+        if ($group->status === 'archived') {
+            return response()->json(['message' => 'Cannot invite members to an archived group.'], 400);
+        }
+
+        // Check if group is full
+        $currentMembersCount = $group->members()->count();
+        if ($currentMembersCount >= $group->max_members) {
+            return response()->json(['message' => 'Group is full. Cannot send invitation.'], 400);
+        }
+
+        // Cannot invite the leader themselves
+        if ($targetUserId == $group->creator_id) {
+            return response()->json(['message' => 'Cannot invite the group leader.'], 400);
+        }
+
+        // Check if user is already a member
+        $isAlreadyMember = $group->members()->where('users.id', $targetUserId)->exists();
+        if ($isAlreadyMember) {
+            return response()->json(['message' => 'This user is already a member of the group.'], 400);
+        }
+
+        // Check if there's already a pending invitation or request
+        $existingRelation = $group->allMemberRelations()
+            ->where('users.id', $targetUserId)
+            ->wherePivot('status', 'pending')
+            ->first();
+
+        if ($existingRelation) {
+            // If user has a pending join request, auto-approve it and treat as invitation
+            if (!$existingRelation->pivot->invited_by) {
+                $group->allMemberRelations()->updateExistingPivot($targetUserId, [
+                    'status' => 'approved',
+                    'invited_by' => $currentUser->id,
+                    'approved_at' => now()
+                ]);
+
+                // Award karma for joining
+                $invitedUser = User::find($targetUserId);
+                KarmaService::awardGroupJoin($invitedUser);
+
+                // Award karma to the group leader for gaining a member
+                KarmaService::awardLeaderForMemberJoin($currentUser);
+
+                return response()->json([
+                    'message' => 'User request was auto-approved!',
+                    'auto_approved' => true
+                ]);
+            } else {
+                // Already has a pending invitation
+                return response()->json(['message' => 'This user already has a pending invitation.'], 400);
+            }
+        }
+
+        // Create new invitation
+        $group->allMemberRelations()->attach($targetUserId, [
+            'status' => 'pending',
+            'invited_by' => $currentUser->id,
+            'created_at' => now(),
+            'updated_at' => now()
+        ]);
+
+        // Get invited user
+        $invitedUser = User::find($targetUserId);
+
+        // Create notification for invited user
+        Notification::create([
+            'user_id' => $targetUserId,
+            'type' => 'group_invitation',
+            'data' => [
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'inviter_name' => $currentUser->name,
+                'inviter_id' => $currentUser->id,
+                'message' => "{$currentUser->name} invited you to join '{$group->name}'"
+            ]
+        ]);
+
+        // Send email notification if user's email is verified
+        if ($invitedUser && $invitedUser->email_verified_at) {
+            try {
+                Mail::to($invitedUser->email)->send(new GroupInvitationMail(
+                    $invitedUser->name,
+                    $currentUser->name,
+                    $group->name,
+                    $group->id
+                ));
+            } catch (\Exception $e) {
+                \Log::error('Failed to send group invitation email: ' . $e->getMessage());
+            }
+        }
+
+        return response()->json([
+            'message' => 'Invitation sent successfully!',
+            'invited_user' => [
+                'id' => $invitedUser->id,
+                'name' => $invitedUser->name,
+                'email' => $invitedUser->email
+            ]
+        ]);
+    }
+
+    /**
+     * Accept a group invitation
+     */
+    public function acceptInvitation($groupId)
+    {
+        $group = StudyGroup::findOrFail($groupId);
+        $currentUser = Auth::user();
+
+        // Find the invitation
+        $invitation = $group->allMemberRelations()
+            ->where('users.id', $currentUser->id)
+            ->wherePivot('status', 'pending')
+            ->whereNotNull('invited_by')
+            ->first();
+
+        if (!$invitation) {
+            return response()->json(['message' => 'No pending invitation found.'], 404);
+        }
+
+        // Check if group is still not full
+        $currentMembersCount = $group->members()->count();
+        if ($currentMembersCount >= $group->max_members) {
+            return response()->json(['message' => 'Group is now full. Cannot accept invitation.'], 400);
+        }
+
+        // Update invitation to approved
+        $group->allMemberRelations()->updateExistingPivot($currentUser->id, [
+            'status' => 'approved',
+            'approved_at' => now()
+        ]);
+
+        // Award karma for joining
+        KarmaService::awardGroupJoin($currentUser);
+
+        // Delete the invitation notification
+        Notification::where('user_id', $currentUser->id)
+            ->where('type', 'group_invitation')
+            ->where('data->group_id', $group->id)
+            ->delete();
+
+        // Get the inviter (leader)
+        $inviter = User::find($invitation->pivot->invited_by);
+
+        // Award karma to the group leader for gaining a member
+        $groupLeader = User::find($group->creator_id);
+        if ($groupLeader) {
+            KarmaService::awardLeaderForMemberJoin($groupLeader);
+        }
+
+        // Notify the inviter that invitation was accepted
+        if ($inviter) {
+            Notification::create([
+                'user_id' => $inviter->id,
+                'type' => 'invitation_accepted',
+                'data' => [
+                    'group_id' => $group->id,
+                    'group_name' => $group->name,
+                    'user_name' => $currentUser->name,
+                    'message' => "{$currentUser->name} accepted your invitation to join '{$group->name}'"
+                ]
+            ]);
+
+            // Send email to inviter
+            if ($inviter->email_verified_at) {
+                try {
+                    Mail::to($inviter->email)->send(new InvitationAcceptedMail(
+                        $inviter->name,
+                        $currentUser->name,
+                        $group->name
+                    ));
+                } catch (\Exception $e) {
+                    \Log::error('Failed to send invitation accepted email: ' . $e->getMessage());
+                }
+            }
+        }
+
+        return response()->json([
+            'message' => 'Invitation accepted! You are now a member of the group.',
+            'group' => $group
+        ]);
+    }
+
+    /**
+     * Decline a group invitation
+     */
+    public function declineInvitation($groupId)
+    {
+        $group = StudyGroup::findOrFail($groupId);
+        $currentUser = Auth::user();
+
+        // Find the invitation
+        $invitation = $group->allMemberRelations()
+            ->where('users.id', $currentUser->id)
+            ->wherePivot('status', 'pending')
+            ->whereNotNull('invited_by')
+            ->first();
+
+        if (!$invitation) {
+            return response()->json(['message' => 'No pending invitation found.'], 404);
+        }
+
+        // Update invitation to rejected
+        $group->allMemberRelations()->updateExistingPivot($currentUser->id, [
+            'status' => 'rejected',
+            'rejected_at' => now()
+        ]);
+
+        // Delete the invitation notification
+        Notification::where('user_id', $currentUser->id)
+            ->where('type', 'group_invitation')
+            ->where('data->group_id', $group->id)
+            ->delete();
+
+        // Get the inviter (leader)
+        $inviter = User::find($invitation->pivot->invited_by);
+
+        // Notify the inviter that invitation was declined
+        if ($inviter) {
+            Notification::create([
+                'user_id' => $inviter->id,
+                'type' => 'invitation_declined',
+                'data' => [
+                    'group_id' => $group->id,
+                    'group_name' => $group->name,
+                    'user_name' => $currentUser->name,
+                    'message' => "{$currentUser->name} declined your invitation to join '{$group->name}'"
+                ]
+            ]);
+        }
+
+        return response()->json(['message' => 'Invitation declined.']);
+    }
+
+    /**
+     * Get list of users invited to the group (Leader only)
+     */
+    public function getInvitedUsers($groupId)
+    {
+        $group = StudyGroup::findOrFail($groupId);
+        $currentUser = Auth::user();
+
+        // Only leader can see invited users
+        if ($group->creator_id !== $currentUser->id) {
+            return response()->json(['message' => 'Only the group leader can view pending invitations.'], 403);
+        }
+
+        // Get invited users
+        $invitedUsers = $group->invitedUsers()
+            ->select('users.id', 'users.name', 'users.email', 'users.major', 'users.avatar')
+            ->get()
+            ->map(function ($user) {
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'major' => $user->major,
+                    'avatar' => $user->avatar,
+                    'invited_at' => $user->pivot->created_at
+                ];
+            });
+
+        return response()->json($invitedUsers);
     }
 
     /**

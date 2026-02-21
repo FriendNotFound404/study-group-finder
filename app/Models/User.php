@@ -74,7 +74,7 @@ class User extends Authenticatable implements MustVerifyEmail
     public function joinedGroups() {
         // Only approved memberships
         return $this->belongsToMany(StudyGroup::class, 'group_user', 'user_id', 'group_id')
-            ->withPivot('status', 'approved_at', 'rejected_at')
+            ->withPivot('status', 'approved_at', 'rejected_at', 'invited_by')
             ->wherePivot('status', 'approved')
             ->withTimestamps();
     }
@@ -82,8 +82,17 @@ class User extends Authenticatable implements MustVerifyEmail
     public function pendingGroupRequests() {
         // Groups where user has pending requests
         return $this->belongsToMany(StudyGroup::class, 'group_user', 'user_id', 'group_id')
-            ->withPivot('status', 'approved_at', 'rejected_at')
+            ->withPivot('status', 'approved_at', 'rejected_at', 'invited_by')
             ->wherePivot('status', 'pending')
+            ->withTimestamps();
+    }
+
+    public function groupInvitations() {
+        // Groups where user has been invited (pending invitations)
+        return $this->belongsToMany(StudyGroup::class, 'group_user', 'user_id', 'group_id')
+            ->withPivot('status', 'invited_by', 'created_at')
+            ->wherePivot('status', 'pending')
+            ->whereNotNull('invited_by')
             ->withTimestamps();
     }
 

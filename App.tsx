@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { ThemeProvider } from './contexts/ThemeContext';
 import { HashRouter, Routes, Route, Navigate, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Home,
@@ -38,6 +39,7 @@ import AdminEvents from './components/admin/AdminEvents';
 import AdminRatings from './components/admin/AdminRatings';
 import AdminReports from './components/admin/AdminReports';
 import AdminAnalytics from './components/admin/AdminAnalytics';
+import AdminModerationActivity from './components/admin/AdminModerationActivity';
 
 import { User, AppNotification } from './types';
 import { apiService } from './services/apiService';
@@ -66,6 +68,48 @@ const SidebarLink: React.FC<{ to: string; icon: React.ReactNode; label: string }
   );
 };
 
+// Shared AudioContext — must be created/resumed during a user gesture
+// to satisfy browser autoplay policy. We create it once on first click.
+let sharedAudioCtx: AudioContext | null = null;
+
+export const initAudioContext = () => {
+  try {
+    if (!sharedAudioCtx) {
+      sharedAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (sharedAudioCtx.state === 'suspended') {
+      sharedAudioCtx.resume();
+    }
+  } catch {
+    // Ignore if AudioContext is unavailable
+  }
+};
+
+export const playNotificationSound = () => {
+  const ctx = sharedAudioCtx;
+  if (!ctx || ctx.state !== 'running') return;
+  try {
+    const playTone = (freq: number, startTime: number, duration: number, volume: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(volume, startTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      osc.start(startTime);
+      osc.stop(startTime + duration);
+    };
+    // Two-tone chime: A5 then C#6
+    playTone(880, ctx.currentTime, 0.35, 0.18);
+    playTone(1108.73, ctx.currentTime + 0.12, 0.45, 0.14);
+  } catch {
+    // Ignore audio errors
+  }
+};
+
 const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => void; showSearch?: boolean; pageTitle?: string; pageSubtitle?: string }> = ({ children, user, onLogout, showSearch = false, pageTitle, pageSubtitle }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,6 +117,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const prevUnreadCount = useRef<number | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +142,21 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000); // Poll every 30s
     return () => clearInterval(interval);
+  }, []);
+
+  // Unlock AudioContext on first user interaction (browser autoplay policy)
+  useEffect(() => {
+    const unlock = () => {
+      initAudioContext();
+      document.removeEventListener('click', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+    };
+    document.addEventListener('click', unlock, true);
+    document.addEventListener('keydown', unlock, true);
+    return () => {
+      document.removeEventListener('click', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+    };
   }, []);
 
   useEffect(() => {
@@ -124,10 +184,17 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
 
       setSearchLoading(true);
       try {
-        const [groups, users] = await Promise.all([
+        const [groupsResult, usersResult] = await Promise.allSettled([
           apiService.getGroups(),
           apiService.searchUsers(searchQuery)
         ]);
+
+        const groups = groupsResult.status === 'fulfilled' ? groupsResult.value : [];
+        const users = usersResult.status === 'fulfilled' && Array.isArray(usersResult.value) ? usersResult.value : [];
+
+        if (usersResult.status === 'rejected') {
+          console.error('User search failed:', usersResult.reason);
+        }
 
         const filteredGroups = groups.filter(g => {
           const q = searchQuery.toLowerCase();
@@ -139,13 +206,13 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
             g.creator_name.toLowerCase().includes(q) ||
             g.location.toLowerCase().includes(q)
           );
-        }).slice(0, 5); // Show only top 5 results
+        }).slice(0, 5);
 
-        const filteredUsers = users.slice(0, 5); // Show only top 5 users
+        const filteredUsers = users.slice(0, 5);
 
         setSearchResults(filteredGroups);
         setSearchedUsers(filteredUsers);
-        setShowSearchDropdown(true);
+        setShowSearchDropdown(filteredGroups.length > 0 || filteredUsers.length > 0);
       } catch (err) {
         console.error('Search error:', err);
         setSearchResults([]);
@@ -178,7 +245,16 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
       });
-      setUnreadCount(countData.count);
+
+      const newCount = countData.count;
+      // Play sound only when unread count increases (skip on first load)
+      if (prevUnreadCount.current !== null && newCount > prevUnreadCount.current) {
+        if (localStorage.getItem('notification_sound') !== 'false') {
+          playNotificationSound();
+        }
+      }
+      prevUnreadCount.current = newCount;
+      setUnreadCount(newCount);
     } catch (err) {
       console.error("Failed to fetch notifications", err);
     }
@@ -259,7 +335,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
             <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-orange-200">AU</div>
             <div className="flex flex-col">
               <span className="font-extrabold text-slate-900 leading-none">StudyHub</span>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Study Group</span>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Study Group Finder</span>
             </div>
           </div>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden">
@@ -270,7 +346,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
         <nav className="flex-1 px-4 space-y-1">
           <SidebarLink to="/home" icon={<Home size={20} />} label="Home" />
           <SidebarLink to="/groups" icon={<Users size={20} />} label="My Groups" />
-          <SidebarLink to="/report" icon={<AlertTriangle size={20} />} label="Report" />
+          <SidebarLink to="/report" icon={<AlertTriangle size={20} />} label="Report User" />
           <SidebarLink to="/calendar" icon={<CalendarIcon size={20} />} label="Calendar" />
           <SidebarLink to="/leaders" icon={<Trophy size={20} />} label="Contributors" />
           <SidebarLink to="/profile" icon={<UserIcon size={20} />} label="Profile" />
@@ -300,7 +376,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
                   <Search className={`w-5 h-5 transition-colors ${searchQuery ? 'text-orange-500' : 'text-slate-400'}`} />
                   <input
                     type="text"
-                    placeholder="Search groups, subjects, faculty..."
+                    placeholder="Search groups and users..."
                     className="bg-transparent border-none outline-none ml-3 w-full text-slate-600 placeholder:text-slate-400 font-medium"
                     value={searchQuery}
                     onChange={handleSearchChange}
@@ -382,7 +458,7 @@ const Layout: React.FC<{ children: React.ReactNode; user: User; onLogout: () => 
                     )}
 
                     <div className="p-3 bg-slate-50 border-t border-slate-100">
-                      <p className="text-xs text-slate-500 text-center">
+                      <p className="text-xs text-slate-500">
                         Press <kbd className="px-2 py-1 bg-white border border-slate-200 rounded text-xs font-bold">Enter</kbd> to see all results
                       </p>
                     </div>
@@ -484,6 +560,7 @@ const App: React.FC = () => {
   };
 
   return (
+    <ThemeProvider>
     <HashRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
@@ -539,11 +616,15 @@ const App: React.FC = () => {
         <Route path="/admin/analytics" element={
           isAdminAuth() ? <AdminAnalytics /> : <Navigate to="/admin/login" />
         } />
+        <Route path="/admin/moderation" element={
+          isAdminAuth() ? <AdminModerationActivity /> : <Navigate to="/admin/login" />
+        } />
         <Route path="/admin" element={<Navigate to="/admin/dashboard" />} />
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </HashRouter>
+    </ThemeProvider>
   );
 };
 

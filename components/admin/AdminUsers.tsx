@@ -42,6 +42,7 @@ const AdminUsers: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
@@ -108,7 +109,7 @@ const AdminUsers: React.FC = () => {
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [currentPage, searchQuery, roleFilter]);
+  }, [currentPage, searchQuery, roleFilter, statusFilter]);
 
   const fetchUsers = async (silent = false) => {
     try {
@@ -126,6 +127,7 @@ const AdminUsers: React.FC = () => {
         page: currentPage.toString(),
         ...(searchQuery && { search: searchQuery }),
         ...(roleFilter && { role: roleFilter }),
+        ...(statusFilter && { status: statusFilter }),
       });
 
       const response = await fetch(
@@ -567,23 +569,44 @@ const AdminUsers: React.FC = () => {
             />
           </div>
 
-          {/* Role Filter */}
-          <div className="relative">
-            <Shield className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-            <select
-              value={roleFilter}
-              onChange={(e) => {
-                setRoleFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full md:w-48 pl-12 pr-10 py-3 bg-white border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all outline-none font-bold text-slate-900 appearance-none cursor-pointer"
-            >
-              <option value="">All Roles</option>
-              <option value="member">Members</option>
-              <option value="leader">Leaders</option>
-              <option value="moderator">Moderators</option>
-              <option value="admin">Admins</option>
-            </select>
+          {/* Filters */}
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* Role Filter */}
+            <div className="relative flex-1">
+              <Shield className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <select
+                value={roleFilter}
+                onChange={(e) => {
+                  setRoleFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full pl-12 pr-10 py-3 bg-white border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all outline-none font-bold text-slate-900 appearance-none cursor-pointer"
+              >
+                <option value="">All Roles</option>
+                <option value="member">Members</option>
+                <option value="leader">Leaders</option>
+                <option value="moderator">Moderators</option>
+                <option value="admin">Admins</option>
+              </select>
+            </div>
+
+            {/* Status Filter */}
+            <div className="relative flex-1">
+              <AlertTriangle className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full pl-12 pr-10 py-3 bg-white border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all outline-none font-bold text-slate-900 appearance-none cursor-pointer"
+              >
+                <option value="">All Status</option>
+                <option value="warned">Warned Users</option>
+                <option value="suspended">Suspended Users</option>
+                <option value="banned">Banned Users</option>
+              </select>
+            </div>
           </div>
         </div>
 

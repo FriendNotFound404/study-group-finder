@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Log;
  * EARNING KARMA (Positive Actions):
  * - Creating a group: +20 points
  * - Joining a group: +10 points
+ * - Leader gains a member: +15 points (when user joins or accepts invitation)
  * - Sending a text message: +5 points
  * - Uploading a file in chat: +10 points (5 for message + 5 bonus)
  * - Creating a meeting/event: +15 points
@@ -26,6 +27,7 @@ use Illuminate\Support\Facades\Log;
  * - Getting banned: -50 points
  * - Being kicked from a group: -20 points
  * - Leaving a group voluntarily: -5 points
+ * - Leader loses a member (voluntary leave): -10 points
  * - Receiving a bad rating (1-2 stars average): -5 points per rating
  *
  * RATING SYSTEM KARMA:
@@ -49,6 +51,14 @@ class KarmaService
     public static function awardGroupJoin(User $user): void
     {
         self::addKarma($user, 10, 'Joined a study group');
+    }
+
+    /**
+     * Award karma to group leader when a member joins
+     */
+    public static function awardLeaderForMemberJoin(User $leader): void
+    {
+        self::addKarma($leader, 15, 'Member joined group');
     }
 
     /**
@@ -126,6 +136,14 @@ class KarmaService
     }
 
     /**
+     * Deduct karma from group leader when a member leaves voluntarily
+     */
+    public static function penalizeLeaderForMemberLeave(User $leader): void
+    {
+        self::deductKarma($leader, 10, 'Member left group');
+    }
+
+    /**
      * Award karma for receiving a good rating
      * @param float $averageRating Average of group_rating and leader_rating
      */
@@ -189,6 +207,7 @@ class KarmaService
         $values = [
             'group_creation' => 20,
             'group_join' => 10,
+            'leader_member_join' => 15,
             'message' => 5,
             'file_upload' => 10,
             'meeting_creation' => 15,
@@ -200,6 +219,7 @@ class KarmaService
             'ban' => -50,
             'kick' => -20,
             'leave' => -5,
+            'leader_member_leave' => -10,
             'good_rating' => 10,
             'bad_rating' => -5,
         ];
